@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""HXC Lean 4: single-file, plug-and-play Google Colab runner v2.
+
+Paste this entire script into one Colab cell and run it.
+
+It ignores Jupyter/Colab command-line arguments, reconstructs the complete
+Lean source from Base64, installs or reuses Lean idempotently, audits the source, prints complete
+compiler diagnostics, and runs both direct elaboration and `lake build`.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+TOOLCHAIN = os.environ.get(
+    "HXC_LEAN_TOOLCHAIN",
+    "leanprover/lean4:v4.33.0-rc1",
+)
+ROOT = Path("/content/HXCLean")
+FILES_B64 = {
+    "HXC.lean": "aW1wb3J0IFN0ZAoKbmFtZXNwYWNlIEhYQwoKLy0hCiMgSHlwZXJNb3JwaGljIFhlbm9nbHlwaGljIENhbGN1bHVzCgpBIGNvbXBhY3QsIGRlcGVuZGVuY3ktbGlnaHQgTGVhbiA0IGZvcm1hbGlzYXRpb24gb2Y6CgoqIHR5cGVkIFVuaWNvZGUgZ2x5cGggc2lnbmF0dXJlczsKKiB0eXBlZCBYZW5vZ2x5cGhpYyBleHByZXNzaW9uczsKKiBydW50aW1lLWV4dGVuc2libGUgZ2x5cGggcmVnaXN0cmllczsKKiBpbnZhcmlhbnQtcHJlc2VydmluZyB0cmFuc3BvcnQgYW5kIHBlcnNwZWN0aXZlIHJvdGF0aW9uOwoqIGNlcnRpZmllZCByZWNvdmVyYWJpbGl0eTsKKiBjb21wb3NpdGlvbiBvZiByZWNvdmVyYWJsZSByZXByZXNlbnRhdGlvbiBjaGFuZ2VzOwoqIHdvcmtlZCBleGFtcGxlcyBmb3IgYOKMrGAsIGDin5xgLCBhbmQgYOKNiWAuCgpUaGUgZmlsZSBjb250YWlucyBvbmx5IGV4cGxpY2l0IGRlZmluaXRpb25zIGFuZCBrZXJuZWwtY2hlY2thYmxlIHByb29mcy4KLS8KCi8tLSBDb3JlIHNlbWFudGljIHR5cGVzIHVzZWQgYnkgdGhlIFhlbm9nbHlwaGljIGNhbGN1bHVzLiAtLwppbmR1Y3RpdmUgWFR5cGUgd2hlcmUKICB8IHN5bWJvbGljT2JqZWN0CiAgfCBzdHJ1Y3R1cmFsRGlmZmVyZW5jZQogIHwgc2hhcmVkU3RydWN0dXJlCiAgfCBjb250ZXh0V29ybGQKICB8IHRlbXBvcmFsU3RhdGUKICB8IGZvbGRlZEhpc3RvcnkKICB8IHBvc3NpYmlsaXR5U3BhY2UKICB8IGNvbnN0cmFpbnQKICB8IGNvbnRleHR1YWxPYmplY3QKICB8IGVtZXJnZW50T2JqZWN0CiAgfCBwcm9wb3NpdGlvbgogIHwgYmlmdXJjYXRpb24KICB8IHJlY292ZXJhYmxlVHJhbnNmb3JtYXRpb24KZGVyaXZpbmcgRGVjaWRhYmxlRXEsIFJlcHIKCi8tLSBBIHR5cGVkIHNpZ25hdHVyZSBmb3Igb25lIHJlZ2lzdGVyZWQgVW5pY29kZSBnbHlwaC4gLS8Kc3RydWN0dXJlIEdseXBoU2lnIHdoZXJlCiAgc3ltYm9sIDogU3RyaW5nCiAgaW5wdXRzIDogTGlzdCBYVHlwZQogIG91dHB1dCA6IFhUeXBlCiAgb3BlcmF0aW9uYWxNZWFuaW5nIDogU3RyaW5nCmRlcml2aW5nIERlY2lkYWJsZUVxLCBSZXByCgovLS0gWGVub2dseXBoaWMgYWJzdHJhY3Qgc3ludGF4LiAtLwppbmR1Y3RpdmUgRXhwciB3aGVyZQogIHwgYXRvbSAobmFtZSA6IFN0cmluZykgKHR5cGUgOiBYVHlwZSkKICB8IGFwcCAoZ2x5cGggOiBHbHlwaFNpZykgKGFyZ3VtZW50cyA6IExpc3QgRXhwcikKZGVyaXZpbmcgUmVwcgoKLy0KYEhhc1R5cGUgZSDPhGAgY2VydGlmaWVzIHRoYXQgZXhwcmVzc2lvbiBgZWAgaGFzIHR5cGUgYM+EYC4KCmBBcmd1bWVudHNIYXZlVHlwZXMgZXMgz4RzYCBjZXJ0aWZpZXMgcG9pbnR3aXNlIGFncmVlbWVudCBiZXR3ZWVuIGFuCmV4cHJlc3Npb24gbGlzdCBhbmQgYSBnbHlwaCdzIGRlY2xhcmVkIGlucHV0LXR5cGUgbGlzdC4KClRoaXMgaXMgYW4gb3JkaW5hcnkgYmxvY2sgY29tbWVudCByYXRoZXIgdGhhbiBhIGRvY3VtZW50YXRpb24gY29tbWVudDoKTGVhbiBkb2N1bWVudGF0aW9uIGNvbW1lbnRzIG11c3QgYXR0YWNoIGRpcmVjdGx5IHRvIGEgZGVjbGFyYXRpb24sIHdoZXJlYXMKYG11dHVhbGAgaXMgYSBkZWNsYXJhdGlvbiBncm91cCBjb21tYW5kLgotLwptdXR1YWwKICBpbmR1Y3RpdmUgSGFzVHlwZSA6IEV4cHIg4oaSIFhUeXBlIOKGkiBQcm9wIHdoZXJlCiAgICB8IGF0b20gKG5hbWUgOiBTdHJpbmcpICh0eXBlIDogWFR5cGUpIDoKICAgICAgICBIYXNUeXBlICguYXRvbSBuYW1lIHR5cGUpIHR5cGUKICAgIHwgYXBwIChnbHlwaCA6IEdseXBoU2lnKSAoYXJndW1lbnRzIDogTGlzdCBFeHByKQogICAgICAgICh0eXBlZEFyZ3VtZW50cyA6IEFyZ3VtZW50c0hhdmVUeXBlcyBhcmd1bWVudHMgZ2x5cGguaW5wdXRzKSA6CiAgICAgICAgSGFzVHlwZSAoLmFwcCBnbHlwaCBhcmd1bWVudHMpIGdseXBoLm91dHB1dAoKICBpbmR1Y3RpdmUgQXJndW1lbnRzSGF2ZVR5cGVzIDogTGlzdCBFeHByIOKGkiBMaXN0IFhUeXBlIOKGkiBQcm9wIHdoZXJlCiAgICB8IG5pbCA6IEFyZ3VtZW50c0hhdmVUeXBlcyBbXSBbXQogICAgfCBjb25zIHtleHByZXNzaW9uIDogRXhwcn0ge2V4cHJlc3Npb25zIDogTGlzdCBFeHByfQogICAgICAgIHt0eXBlIDogWFR5cGV9IHt0eXBlcyA6IExpc3QgWFR5cGV9CiAgICAgICAgKGhlYWRUeXBlZCA6IEhhc1R5cGUgZXhwcmVzc2lvbiB0eXBlKQogICAgICAgICh0YWlsVHlwZWQgOiBBcmd1bWVudHNIYXZlVHlwZXMgZXhwcmVzc2lvbnMgdHlwZXMpIDoKICAgICAgICBBcmd1bWVudHNIYXZlVHlwZXMgKGV4cHJlc3Npb24gOjogZXhwcmVzc2lvbnMpICh0eXBlIDo6IHR5cGVzKQplbmQKCi8tLSBBIHdlbGwtdHlwZWQgYXBwbGljYXRpb24gaGFzIHRoZSBvdXRwdXQgdHlwZSBkZWNsYXJlZCBieSBpdHMgZ2x5cGguIC0vCnRoZW9yZW0gYXBwbGljYXRpb25faGFzX2RlY2xhcmVkX3R5cGUKICAgIChnbHlwaCA6IEdseXBoU2lnKQogICAgKGFyZ3VtZW50cyA6IExpc3QgRXhwcikKICAgIChoIDogQXJndW1lbnRzSGF2ZVR5cGVzIGFyZ3VtZW50cyBnbHlwaC5pbnB1dHMpIDoKICAgIEhhc1R5cGUgKC5hcHAgZ2x5cGggYXJndW1lbnRzKSBnbHlwaC5vdXRwdXQgOj0KICBIYXNUeXBlLmFwcCBnbHlwaCBhcmd1bWVudHMgaAoKLy0tIEEgZ2x5cGggcmVnaXN0cnkgaXMgYSBwYXJ0aWFsIG1hcCBmcm9tIFVuaWNvZGUgc3RyaW5ncyB0byBzaWduYXR1cmVzLiAtLwphYmJyZXYgR2x5cGhSZWdpc3RyeSA6PSBTdHJpbmcg4oaSIE9wdGlvbiBHbHlwaFNpZwoKLy0tIEV4dGVuZCBhIHJlZ2lzdHJ5IHdpdGggYSBmcmVzaCBvciByZXBsYWNlbWVudCBnbHlwaC4gLS8KZGVmIGV4dGVuZFJlZ2lzdHJ5CiAgICAocmVnaXN0cnkgOiBHbHlwaFJlZ2lzdHJ5KQogICAgKGZyZXNoIDogR2x5cGhTaWcpIDoKICAgIEdseXBoUmVnaXN0cnkgOj0KICBmdW4gcXVlcmllZCA9PgogICAgaWYgcXVlcmllZCA9IGZyZXNoLnN5bWJvbCB0aGVuIHNvbWUgZnJlc2ggZWxzZSByZWdpc3RyeSBxdWVyaWVkCgovLS0gVGhlIG5ld2x5IHJlZ2lzdGVyZWQgZ2x5cGggaXMgaW1tZWRpYXRlbHkgYXZhaWxhYmxlLiAtLwp0aGVvcmVtIGV4dGVuZF9yZWdpc3RyeV9maW5kc19uZXcKICAgIChyZWdpc3RyeSA6IEdseXBoUmVnaXN0cnkpCiAgICAoZnJlc2ggOiBHbHlwaFNpZykgOgogICAgZXh0ZW5kUmVnaXN0cnkgcmVnaXN0cnkgZnJlc2ggZnJlc2guc3ltYm9sID0gc29tZSBmcmVzaCA6PSBieQogIHNpbXAgW2V4dGVuZFJlZ2lzdHJ5XQoKLy0tIFJlZ2lzdGVyaW5nIGEgbmV3IHN5bWJvbCBsZWF2ZXMgZXZlcnkgZGlmZmVyZW50bHkgbmFtZWQgZW50cnkgdW5jaGFuZ2VkLiAtLwp0aGVvcmVtIGV4dGVuZF9yZWdpc3RyeV9wcmVzZXJ2ZXNfb3RoZXIKICAgIChyZWdpc3RyeSA6IEdseXBoUmVnaXN0cnkpCiAgICAoZnJlc2ggOiBHbHlwaFNpZykKICAgIChzeW1ib2wgOiBTdHJpbmcpCiAgICAoaERpZmZlcmVudCA6IHN5bWJvbCDiiaAgZnJlc2guc3ltYm9sKSA6CiAgICBleHRlbmRSZWdpc3RyeSByZWdpc3RyeSBmcmVzaCBzeW1ib2wgPSByZWdpc3RyeSBzeW1ib2wgOj0gYnkKICBzaW1wIFtleHRlbmRSZWdpc3RyeSwgaERpZmZlcmVudF0KCi8tLSBBIHNlbWFudGljIG9iamVjdCB3aXRoIGV4cGxpY2l0IGludmFyaWFudHMgYW5kIHRyYW5zZm9ybWF0aW9uIGhpc3RvcnkuIC0vCnN0cnVjdHVyZSBTZW1hbnRpY1ZhbHVlIHdoZXJlCiAgbGFiZWwgOiBTdHJpbmcKICBpbnZhcmlhbnRzIDogTGlzdCBTdHJpbmcKICBoaXN0b3J5IDogTGlzdCBTdHJpbmcKZGVyaXZpbmcgRGVjaWRhYmxlRXEsIFJlcHIKCi8tLSBFdmVyeSByZXF1aXJlZCBpbnZhcmlhbnQgb2NjdXJzIGluIGEgc2VtYW50aWMgdmFsdWUuIC0vCmRlZiBQcmVzZXJ2ZXMKICAgIChyZXF1aXJlZCA6IExpc3QgU3RyaW5nKQogICAgKHZhbHVlIDogU2VtYW50aWNWYWx1ZSkgOgogICAgUHJvcCA6PQogIOKIgCBpbnZhcmlhbnQsIGludmFyaWFudCDiiIggcmVxdWlyZWQg4oaSIGludmFyaWFudCDiiIggdmFsdWUuaW52YXJpYW50cwoKLy0tIEh5cGVyTW9ycGhpYyB0cmFuc3BvcnQgY2hhbmdlcyByZXByZXNlbnRhdGlvbiBoaXN0b3J5LCBub3QgaW52YXJpYW50cy4gLS8KZGVmIHRyYW5zcG9ydAogICAgKGxhdyB0YXJnZXRXb3JsZCA6IFN0cmluZykKICAgICh2YWx1ZSA6IFNlbWFudGljVmFsdWUpIDoKICAgIFNlbWFudGljVmFsdWUgOj0KICB7CiAgICB2YWx1ZSB3aXRoCiAgICBsYWJlbCA6PSB2YWx1ZS5sYWJlbCArKyAiIOKfnFsiICsrIGxhdyArKyAiXSAiICsrIHRhcmdldFdvcmxkCiAgICBoaXN0b3J5IDo9IHZhbHVlLmhpc3RvcnkgKysgWyLin5w6IiArKyBsYXcgKysgIuKGkiIgKysgdGFyZ2V0V29ybGRdCiAgfQoKLy0tIFBlcnNwZWN0aXZlIHJvdGF0aW9uIGNoYW5nZXMgZGVzY3JpcHRpb24gaGlzdG9yeSwgbm90IGludmFyaWFudHMuIC0vCmRlZiByb3RhdGUKICAgIChhbmdsZSA6IFN0cmluZykKICAgICh2YWx1ZSA6IFNlbWFudGljVmFsdWUpIDoKICAgIFNlbWFudGljVmFsdWUgOj0KICB7CiAgICB2YWx1ZSB3aXRoCiAgICBsYWJlbCA6PSAi4o2JWyIgKysgYW5nbGUgKysgIl0oIiArKyB2YWx1ZS5sYWJlbCArKyAiKSIKICAgIGhpc3RvcnkgOj0gdmFsdWUuaGlzdG9yeSArKyBbIuKNiToiICsrIGFuZ2xlXQogIH0KCi8tLSBUcmFuc3BvcnQgcHJlc2VydmVzIHRoZSBpbnZhcmlhbnQgbGlzdCBleGFjdGx5LiAtLwp0aGVvcmVtIHRyYW5zcG9ydF9pbnZhcmlhbnRzX2V4YWN0CiAgICAobGF3IHRhcmdldFdvcmxkIDogU3RyaW5nKQogICAgKHZhbHVlIDogU2VtYW50aWNWYWx1ZSkgOgogICAgKHRyYW5zcG9ydCBsYXcgdGFyZ2V0V29ybGQgdmFsdWUpLmludmFyaWFudHMgPSB2YWx1ZS5pbnZhcmlhbnRzIDo9IGJ5CiAgcmZsCgovLS0gUGVyc3BlY3RpdmUgcm90YXRpb24gcHJlc2VydmVzIHRoZSBpbnZhcmlhbnQgbGlzdCBleGFjdGx5LiAtLwp0aGVvcmVtIHJvdGF0aW9uX2ludmFyaWFudHNfZXhhY3QKICAgIChhbmdsZSA6IFN0cmluZykKICAgICh2YWx1ZSA6IFNlbWFudGljVmFsdWUpIDoKICAgIChyb3RhdGUgYW5nbGUgdmFsdWUpLmludmFyaWFudHMgPSB2YWx1ZS5pbnZhcmlhbnRzIDo9IGJ5CiAgcmZsCgovLS0gRXZlcnkgZGVjbGFyZWQgaW52YXJpYW50IHN1cnZpdmVzIEh5cGVyTW9ycGhpYyB0cmFuc3BvcnQuIC0vCnRoZW9yZW0gdHJhbnNwb3J0X3ByZXNlcnZlcwogICAgKHJlcXVpcmVkIDogTGlzdCBTdHJpbmcpCiAgICAobGF3IHRhcmdldFdvcmxkIDogU3RyaW5nKQogICAgKHZhbHVlIDogU2VtYW50aWNWYWx1ZSkKICAgIChoIDogUHJlc2VydmVzIHJlcXVpcmVkIHZhbHVlKSA6CiAgICBQcmVzZXJ2ZXMgcmVxdWlyZWQgKHRyYW5zcG9ydCBsYXcgdGFyZ2V0V29ybGQgdmFsdWUpIDo9IGJ5CiAgaW50cm8gaW52YXJpYW50IG1lbWJlcgogIGV4YWN0IGggaW52YXJpYW50IG1lbWJlcgoKLy0tIEV2ZXJ5IGRlY2xhcmVkIGludmFyaWFudCBzdXJ2aXZlcyBwZXJzcGVjdGl2ZSByb3RhdGlvbi4gLS8KdGhlb3JlbSByb3RhdGlvbl9wcmVzZXJ2ZXMKICAgIChyZXF1aXJlZCA6IExpc3QgU3RyaW5nKQogICAgKGFuZ2xlIDogU3RyaW5nKQogICAgKHZhbHVlIDogU2VtYW50aWNWYWx1ZSkKICAgIChoIDogUHJlc2VydmVzIHJlcXVpcmVkIHZhbHVlKSA6CiAgICBQcmVzZXJ2ZXMgcmVxdWlyZWQgKHJvdGF0ZSBhbmdsZSB2YWx1ZSkgOj0gYnkKICBpbnRybyBpbnZhcmlhbnQgbWVtYmVyCiAgZXhhY3QgaCBpbnZhcmlhbnQgbWVtYmVyCgovLS0gQSByZXByZXNlbnRhdGlvbiBjaGFuZ2UgcGFja2FnZWQgd2l0aCBhIGNlcnRpZmllZCByZWNvdmVyeSBvcGVyYXRpb24uIC0vCnN0cnVjdHVyZSBSZWNvdmVyYWJsZVRyYW5zcG9ydCAozrEgOiBUeXBlKSB3aGVyZQogIGZvcndhcmQgOiDOsSDihpIgzrEKICByZWNvdmVyIDogzrEg4oaSIM6xCiAgbGVmdEludmVyc2UgOiDiiIAgdmFsdWUsIHJlY292ZXIgKGZvcndhcmQgdmFsdWUpID0gdmFsdWUKCi8tLSBDZXJ0aWZpZWQgdHJhbnNwb3J0IGlzIHJlY292ZXJhYmxlIGJ5IGNvbnN0cnVjdGlvbi4gLS8KdGhlb3JlbSByZWNvdmVyX2FmdGVyX3RyYW5zcG9ydAogICAge86xIDogVHlwZX0KICAgIChjaGFuZ2UgOiBSZWNvdmVyYWJsZVRyYW5zcG9ydCDOsSkKICAgICh2YWx1ZSA6IM6xKSA6CiAgICBjaGFuZ2UucmVjb3ZlciAoY2hhbmdlLmZvcndhcmQgdmFsdWUpID0gdmFsdWUgOj0KICBjaGFuZ2UubGVmdEludmVyc2UgdmFsdWUKCi8tLSBJZGVudGl0eSBpcyB0aGUgc2ltcGxlc3QgcmVjb3ZlcmFibGUgcmVwcmVzZW50YXRpb24gY2hhbmdlLiAtLwpkZWYgaWRlbnRpdHlUcmFuc3BvcnQgKM6xIDogVHlwZSkgOiBSZWNvdmVyYWJsZVRyYW5zcG9ydCDOsSB3aGVyZQogIGZvcndhcmQgOj0gZnVuIHZhbHVlID0+IHZhbHVlCiAgcmVjb3ZlciA6PSBmdW4gdmFsdWUgPT4gdmFsdWUKICBsZWZ0SW52ZXJzZSA6PSBieQogICAgaW50cm8gdmFsdWUKICAgIHJmbAoKLy0tIFR3byByZWNvdmVyYWJsZSB0cmFuc2Zvcm1hdGlvbnMgY29tcG9zZSBpbnRvIGEgcmVjb3ZlcmFibGUgcGF0aC4gLS8KZGVmIFJlY292ZXJhYmxlVHJhbnNwb3J0LmNvbXBvc2UKICAgIHvOsSA6IFR5cGV9CiAgICAoc2Vjb25kIGZpcnN0IDogUmVjb3ZlcmFibGVUcmFuc3BvcnQgzrEpIDoKICAgIFJlY292ZXJhYmxlVHJhbnNwb3J0IM6xIHdoZXJlCiAgZm9yd2FyZCA6PSBmdW4gdmFsdWUgPT4gc2Vjb25kLmZvcndhcmQgKGZpcnN0LmZvcndhcmQgdmFsdWUpCiAgcmVjb3ZlciA6PSBmdW4gdmFsdWUgPT4gZmlyc3QucmVjb3ZlciAoc2Vjb25kLnJlY292ZXIgdmFsdWUpCiAgbGVmdEludmVyc2UgOj0gYnkKICAgIGludHJvIHZhbHVlCiAgICBjYWxjCiAgICAgIGZpcnN0LnJlY292ZXIKICAgICAgICAgIChzZWNvbmQucmVjb3ZlcgogICAgICAgICAgICAoc2Vjb25kLmZvcndhcmQgKGZpcnN0LmZvcndhcmQgdmFsdWUpKSkKICAgICAgICAgID0KICAgICAgICAgIGZpcnN0LnJlY292ZXIgKGZpcnN0LmZvcndhcmQgdmFsdWUpIDo9IGJ5CiAgICAgICAgICAgIGV4YWN0IGNvbmdyQXJnIGZpcnN0LnJlY292ZXIKICAgICAgICAgICAgICAoc2Vjb25kLmxlZnRJbnZlcnNlIChmaXJzdC5mb3J3YXJkIHZhbHVlKSkKICAgICAgXyA9IHZhbHVlIDo9IGZpcnN0LmxlZnRJbnZlcnNlIHZhbHVlCgovLS0gUmVjb3Zlcnkgc3VjY2VlZHMgYWZ0ZXIgYSBjb21wb3NlZCByZXByZXNlbnRhdGlvbiBwYXRoLiAtLwp0aGVvcmVtIGNvbXBvc2VkX3RyYW5zcG9ydF9yZWNvdmVycwogICAge86xIDogVHlwZX0KICAgIChzZWNvbmQgZmlyc3QgOiBSZWNvdmVyYWJsZVRyYW5zcG9ydCDOsSkKICAgICh2YWx1ZSA6IM6xKSA6CiAgICAoc2Vjb25kLmNvbXBvc2UgZmlyc3QpLnJlY292ZXIKICAgICAgKChzZWNvbmQuY29tcG9zZSBmaXJzdCkuZm9yd2FyZCB2YWx1ZSkgPSB2YWx1ZSA6PQogIChzZWNvbmQuY29tcG9zZSBmaXJzdCkubGVmdEludmVyc2UgdmFsdWUKCi8tISAjIyBXb3JrZWQgWGVub2dseXBoaWMgZXhhbXBsZXMgLS8KCmRlZiByZXNvbmFuY2VHbHlwaCA6IEdseXBoU2lnIHdoZXJlCiAgc3ltYm9sIDo9ICLijKwiCiAgaW5wdXRzIDo9IFsuc3ltYm9saWNPYmplY3QsIC5zeW1ib2xpY09iamVjdF0KICBvdXRwdXQgOj0gLnNoYXJlZFN0cnVjdHVyZQogIG9wZXJhdGlvbmFsTWVhbmluZyA6PQogICAgIkV4dHJhY3QgYSBkZWNsYXJlZCBzdHJ1Y3R1cmFsIHBhdHRlcm4gc2hhcmVkIGJ5IHR3byBvYmplY3RzLiIKCmRlZiB0cmFuc3BvcnRHbHlwaCA6IEdseXBoU2lnIHdoZXJlCiAgc3ltYm9sIDo9ICLin5wiCiAgaW5wdXRzIDo9IFsuc3ltYm9saWNPYmplY3QsIC5jb250ZXh0V29ybGRdCiAgb3V0cHV0IDo9IC5zeW1ib2xpY09iamVjdAogIG9wZXJhdGlvbmFsTWVhbmluZyA6PQogICAgIlRyYW5zcG9ydCBhbiBvYmplY3QgaW50byBhIHJlcHJlc2VudGF0aW9uIHdoaWxlIHByZXNlcnZpbmcgaW52YXJpYW50cy4iCgpkZWYgcml2ZXIgOiBFeHByIDo9CiAgLmF0b20gInJpdmVyIiAuc3ltYm9saWNPYmplY3QKCmRlZiBjaXJjdWl0IDogRXhwciA6PQogIC5hdG9tICJlbGVjdHJpY2FsIGNpcmN1aXQiIC5zeW1ib2xpY09iamVjdAoKZGVmIHJpdmVyQ2lyY3VpdFJlc29uYW5jZSA6IEV4cHIgOj0KICAuYXBwIHJlc29uYW5jZUdseXBoIFtyaXZlciwgY2lyY3VpdF0KCi8tLSBgcml2ZXIg4oysIGNpcmN1aXRgIGlzIGZvcm1hbGx5IHR5cGVkIGFzIGEgc2hhcmVkIHN0cnVjdHVyZS4gLS8KdGhlb3JlbSByaXZlcl9jaXJjdWl0X3Jlc29uYW5jZV9pc190eXBlZCA6CiAgICBIYXNUeXBlIHJpdmVyQ2lyY3VpdFJlc29uYW5jZSAuc2hhcmVkU3RydWN0dXJlIDo9IGJ5CiAgdW5mb2xkIHJpdmVyQ2lyY3VpdFJlc29uYW5jZQogIGFwcGx5IEhhc1R5cGUuYXBwCiAgZXhhY3QgQXJndW1lbnRzSGF2ZVR5cGVzLmNvbnMKICAgIChIYXNUeXBlLmF0b20gInJpdmVyIiAuc3ltYm9saWNPYmplY3QpCiAgICAoQXJndW1lbnRzSGF2ZVR5cGVzLmNvbnMKICAgICAgKEhhc1R5cGUuYXRvbSAiZWxlY3RyaWNhbCBjaXJjdWl0IiAuc3ltYm9saWNPYmplY3QpCiAgICAgIEFyZ3VtZW50c0hhdmVUeXBlcy5uaWwpCgpkZWYgaWRlbnRpdHlTdGF0ZSA6IFNlbWFudGljVmFsdWUgd2hlcmUKICBsYWJlbCA6PSAiaWRlbnRpdHktYmVhcmluZyBzdGF0ZSIKICBpbnZhcmlhbnRzIDo9IFsiaWRlbnRpdHkiLCAiY2F1c2FsaXR5Il0KICBoaXN0b3J5IDo9IFtdCgovLS0gVGhlIGV4YW1wbGUgc3RhdGUgZXhwbGljaXRseSBwcmVzZXJ2ZXMgaWRlbnRpdHkuIC0vCnRoZW9yZW0gaWRlbnRpdHlfc3RhdGVfcHJlc2VydmVzX2lkZW50aXR5IDoKICAgIFByZXNlcnZlcyBbImlkZW50aXR5Il0gaWRlbnRpdHlTdGF0ZSA6PSBieQogIGludHJvIGludmFyaWFudCBtZW1iZXIKICBzaW1wIGF0IG1lbWJlcgogIHN1YnN0IGludmFyaWFudAogIHNpbXAgW2lkZW50aXR5U3RhdGVdCgovLS0gSWRlbnRpdHkgc3Vydml2ZXMgdHJhbnNwb3J0IGludG8gYSBuZXcgc3ltYm9saWMgd29ybGQuIC0vCnRoZW9yZW0gaWRlbnRpdHlfc3Vydml2ZXNfdHJhbnNwb3J0IDoKICAgIFByZXNlcnZlcyBbImlkZW50aXR5Il0KICAgICAgKHRyYW5zcG9ydCAiz4YiICJyb3RhdGVkLXdvcmxkIiBpZGVudGl0eVN0YXRlKSA6PSBieQogIGV4YWN0IHRyYW5zcG9ydF9wcmVzZXJ2ZXMKICAgIFsiaWRlbnRpdHkiXQogICAgIs+GIgogICAgInJvdGF0ZWQtd29ybGQiCiAgICBpZGVudGl0eVN0YXRlCiAgICBpZGVudGl0eV9zdGF0ZV9wcmVzZXJ2ZXNfaWRlbnRpdHkKCi8tLSBJZGVudGl0eSBzdXJ2aXZlcyBhIHN1YnNlcXVlbnQgcGVyc3BlY3RpdmUgcm90YXRpb24uIC0vCnRoZW9yZW0gaWRlbnRpdHlfc3Vydml2ZXNfdHJhbnNwb3J0X3RoZW5fcm90YXRpb24gOgogICAgUHJlc2VydmVzIFsiaWRlbnRpdHkiXQogICAgICAocm90YXRlICLOuCIKICAgICAgICAodHJhbnNwb3J0ICLPhiIgInJvdGF0ZWQtd29ybGQiIGlkZW50aXR5U3RhdGUpKSA6PSBieQogIGFwcGx5IHJvdGF0aW9uX3ByZXNlcnZlcwogIGV4YWN0IGlkZW50aXR5X3N1cnZpdmVzX3RyYW5zcG9ydAoKLy0tIEEgbmV3bHkgaW52ZW50ZWQgZ2x5cGggY2FuIGJlIHJlZ2lzdGVyZWQgd2l0aG91dCBjaGFuZ2luZyBvbGQgZW50cmllcy4gLS8KZGVmIGVtcHR5UmVnaXN0cnkgOiBHbHlwaFJlZ2lzdHJ5IDo9CiAgZnVuIF8gPT4gbm9uZQoKZGVmIGRlZmVycmVkSW52YXJpYW50R2x5cGggOiBHbHlwaFNpZyB3aGVyZQogIHN5bWJvbCA6PSAi0oIiCiAgaW5wdXRzIDo9IFsuc3ltYm9saWNPYmplY3QsIC5zeW1ib2xpY09iamVjdF0KICBvdXRwdXQgOj0gLnJlY292ZXJhYmxlVHJhbnNmb3JtYXRpb24KICBvcGVyYXRpb25hbE1lYW5pbmcgOj0KICAgICJSZXN0b3JlIGEgZGVjbGFyZWQgaW52YXJpYW50IGFmdGVyIGEgZmluaXRlIHRyYW5zZm9ybWF0aW9uIGhpc3RvcnkuIgoKdGhlb3JlbSBpbnZlbnRlZF9nbHlwaF9pc19hdmFpbGFibGUgOgogICAgZXh0ZW5kUmVnaXN0cnkgZW1wdHlSZWdpc3RyeSBkZWZlcnJlZEludmFyaWFudEdseXBoICLSgiIKICAgICAgPSBzb21lIGRlZmVycmVkSW52YXJpYW50R2x5cGggOj0gYnkKICBleGFjdCBleHRlbmRfcmVnaXN0cnlfZmluZHNfbmV3IGVtcHR5UmVnaXN0cnkgZGVmZXJyZWRJbnZhcmlhbnRHbHlwaAoKI2NoZWNrIHJpdmVyX2NpcmN1aXRfcmVzb25hbmNlX2lzX3R5cGVkCiNjaGVjayBpZGVudGl0eV9zdXJ2aXZlc190cmFuc3BvcnQKI2NoZWNrIGlkZW50aXR5X3N1cnZpdmVzX3RyYW5zcG9ydF90aGVuX3JvdGF0aW9uCiNjaGVjayBjb21wb3NlZF90cmFuc3BvcnRfcmVjb3ZlcnMKI2NoZWNrIGludmVudGVkX2dseXBoX2lzX2F2YWlsYWJsZQoKZW5kIEhYQwo=",
+    "lakefile.toml": "bmFtZSA9ICJoeGMtZm9ybWFsIgp2ZXJzaW9uID0gIjAuMi4wIgpkZWZhdWx0VGFyZ2V0cyA9IFsiSFhDIl0KCltbbGVhbl9saWJdXQpuYW1lID0gIkhYQyIK",
+    "lean-toolchain": "bGVhbnByb3Zlci9sZWFuNDp2NC4zMy4wLXJjMQo=",
+}
+
+FORBIDDEN = (
+    re.compile(r"\bsorry\b"),
+    re.compile(r"\badmit\b"),
+    re.compile(r"^\s*axiom\b", re.MULTILINE),
+    re.compile(r"\bunsafe\b"),
+)
+
+
+def banner(text: str) -> None:
+    print("\n" + "=" * 92, flush=True)
+    print(text, flush=True)
+    print("=" * 92, flush=True)
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env=None,
+    accepted_failure_text: tuple[str, ...] = (),
+) -> str:
+    """Run a command, print all output, and return that output.
+
+    Some Elan releases return exit code 1 for harmless idempotent states such
+    as "toolchain is already installed". Those outcomes are accepted only when
+    their exact diagnostic text is explicitly listed.
+    """
+
+    banner("$ " + " ".join(command))
+    completed = subprocess.run(
+        command,
+        cwd=None if cwd is None else str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    output = completed.stdout or ""
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
+
+    if completed.returncode != 0:
+        lowered = output.lower()
+        accepted = any(marker.lower() in lowered for marker in accepted_failure_text)
+        if not accepted:
+            raise RuntimeError(
+                f"Command failed with exit code {completed.returncode}: "
+                + " ".join(command)
+            )
+        print(
+            "Recognised harmless idempotent Elan result; continuing.",
+            flush=True,
+        )
+
+    return output
+
+
+def reconstruct() -> None:
+    if ROOT.exists():
+        shutil.rmtree(ROOT)
+    ROOT.mkdir(parents=True)
+
+    banner("HXC LEAN BASE64 RECONSTRUCTION")
+    for relative, payload in FILES_B64.items():
+        path = ROOT / relative
+        raw = base64.b64decode(payload.encode("ascii"), validate=True)
+
+        if relative == "lean-toolchain":
+            raw = (TOOLCHAIN + "\n").encode("utf-8")
+
+        path.write_bytes(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        lines = raw.count(b"\n")
+        print(
+            f"{relative:<20} bytes={len(raw):>6} "
+            f"lines={lines:>4} sha256={digest}",
+            flush=True,
+        )
+
+
+def audit() -> None:
+    source = (ROOT / "HXC.lean").read_text(encoding="utf-8")
+    violations = []
+    for pattern in FORBIDDEN:
+        match = pattern.search(source)
+        if match:
+            violations.append(match.group(0))
+
+    if violations:
+        raise RuntimeError(
+            "Proof-placeholder audit failed: " + ", ".join(violations)
+        )
+
+    banner("PROOF-PLACEHOLDER AUDIT: PASSED")
+    print(
+        "No `sorry`, `admit`, local `axiom`, or `unsafe` declarations detected.",
+        flush=True,
+    )
+
+
+def environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = str(Path.home() / ".elan" / "bin") + os.pathsep + env.get("PATH", "")
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
+def install() -> dict[str, str]:
+    """Install prerequisites and select the requested Lean toolchain safely."""
+
+    env = environment()
+
+    run(["apt-get", "update", "-qq"], env=env)
+    run(
+        [
+            "apt-get",
+            "install",
+            "-y",
+            "-qq",
+            "ca-certificates",
+            "curl",
+            "git",
+            "zstd",
+        ],
+        env=env,
+    )
+
+    if shutil.which("elan", path=env["PATH"]) is None:
+        installer = Path("/tmp/elan-init.sh")
+        run(
+            [
+                "curl",
+                "-sSf",
+                "https://elan.lean-lang.org/elan-init.sh",
+                "-o",
+                str(installer),
+            ],
+            env=env,
+        )
+        run(
+            ["sh", str(installer), "-y", "--default-toolchain", "none"],
+            env=env,
+        )
+
+    run(["elan", "--version"], env=env)
+
+    # Elan 4.2.3 may report an already-installed toolchain with exit code 1.
+    # Accept only that explicit idempotent diagnostic; all other failures stop.
+    run(
+        ["elan", "toolchain", "install", TOOLCHAIN],
+        env=env,
+        accepted_failure_text=(
+            "is already installed",
+            "already installed",
+        ),
+    )
+
+    # Avoid changing the notebook's global Elan default. Every subsequent Lean
+    # and Lake command is pinned through this environment variable.
+    env["ELAN_TOOLCHAIN"] = TOOLCHAIN
+
+    run(["elan", "toolchain", "list"], env=env)
+    run(["lean", "--version"], env=env)
+    run(["lake", "--version"], env=env)
+    return env
+
+
+def build(env: dict[str, str]) -> None:
+    stale = ROOT / ".lake"
+    if stale.exists():
+        shutil.rmtree(stale)
+
+    # First elaborate the exact source directly. This produces the clearest
+    # source-position diagnostics if a theorem fails.
+    run(["lake", "env", "lean", "HXC.lean"], cwd=ROOT, env=env)
+
+    # Then verify the repository package target itself.
+    run(["lake", "build"], cwd=ROOT, env=env)
+
+
+def main() -> None:
+    # Deliberately do not parse sys.argv. Colab injects `-f kernel.json`.
+    banner("HXC LEAN 4 - ONE-FLOW GOOGLE COLAB BUILD V2")
+    print(f"Repository root: {ROOT}", flush=True)
+    print(f"Toolchain:       {TOOLCHAIN}", flush=True)
+
+    reconstruct()
+    audit()
+    env = install()
+    build(env)
+
+    banner("HXC LEAN BUILD: PASSED")
+    print(f"Formal project: {ROOT}", flush=True)
+    print(f"Lean source:    {ROOT / 'HXC.lean'}", flush=True)
+    print("All definitions and proofs were accepted by the Lean kernel.", flush=True)
+
+
+if __name__ == "__main__":
+    main()
