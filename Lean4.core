@@ -229,3 +229,92 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+============================================================================================
+HXC LEAN 4 - ONE-FLOW GOOGLE COLAB BUILD V2
+============================================================================================
+Repository root: /content/HXCLean
+Toolchain:       leanprover/lean4:v4.33.0-rc1
+
+============================================================================================
+HXC LEAN BASE64 RECONSTRUCTION
+============================================================================================
+HXC.lean             bytes= 10283 lines= 324 sha256=0daf9a3e59f93991520da554210723c6974532528e9ed289276d08d531867435
+lakefile.toml        bytes=    90 lines=   6 sha256=c0a45c76cb929be7ad3f06a2cee6cd8a968efc2ffa6a26fe58ddbbf3c523fa9d
+lean-toolchain       bytes=    29 lines=   1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+
+============================================================================================
+PROOF-PLACEHOLDER AUDIT: PASSED
+============================================================================================
+No `sorry`, `admit`, local `axiom`, or `unsafe` declarations detected.
+
+============================================================================================
+$ apt-get update -qq
+============================================================================================
+W: Skipping acquire of configured file 'main/source/Sources' as repository 'https://r2u.stat.illinois.edu/ubuntu jammy InRelease' does not seem to provide it (sources.list entry misspelt?)
+
+============================================================================================
+$ apt-get install -y -qq ca-certificates curl git zstd
+============================================================================================
+
+============================================================================================
+$ elan --version
+============================================================================================
+elan 4.2.3 (b6cec7e10 2026-06-08)
+
+============================================================================================
+$ elan toolchain install leanprover/lean4:v4.33.0-rc1
+============================================================================================
+error: 'leanprover/lean4:v4.33.0-rc1' is already installed
+Recognised harmless idempotent Elan result; continuing.
+
+============================================================================================
+$ elan toolchain list
+============================================================================================
+leanprover/lean4:v4.33.0-rc1
+
+============================================================================================
+$ lean --version
+============================================================================================
+Lean (version 4.33.0-rc1, x86_64-unknown-linux-gnu, commit 62eed1db4d67327ec8120be05f1a1b0847d74561, Release)
+
+============================================================================================
+$ lake --version
+============================================================================================
+Lake version 5.0.0-src+62eed1d (Lean version 4.33.0-rc1)
+
+============================================================================================
+$ lake env lean HXC.lean
+============================================================================================
+info: hxc-formal: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+HXC.river_circuit_resonance_is_typed : HasType riverCircuitResonance XType.sharedStructure
+HXC.identity_survives_transport : Preserves ["identity"] (transport "φ" "rotated-world" identityState)
+HXC.identity_survives_transport_then_rotation :
+  Preserves ["identity"] (rotate "θ" (transport "φ" "rotated-world" identityState))
+HXC.composed_transport_recovers {α : Type} (second first : RecoverableTransport α) (value : α) :
+  (second.compose first).recover ((second.compose first).forward value) = value
+HXC.invented_glyph_is_available : extendRegistry emptyRegistry deferredInvariantGlyph "҂" = some deferredInvariantGlyph
+
+============================================================================================
+$ lake build
+============================================================================================
+ℹ [2/3] Built HXC (1.9s)
+info: HXC.lean:318:0: HXC.river_circuit_resonance_is_typed : HasType riverCircuitResonance XType.sharedStructure
+info: HXC.lean:319:0: HXC.identity_survives_transport : Preserves ["identity"] (transport "φ" "rotated-world" identityState)
+info: HXC.lean:320:0: HXC.identity_survives_transport_then_rotation :
+  Preserves ["identity"] (rotate "θ" (transport "φ" "rotated-world" identityState))
+info: HXC.lean:321:0: HXC.composed_transport_recovers {α : Type} (second first : RecoverableTransport α) (value : α) :
+  (second.compose first).recover ((second.compose first).forward value) = value
+info: HXC.lean:322:0: HXC.invented_glyph_is_available : extendRegistry emptyRegistry deferredInvariantGlyph "҂" = some deferredInvariantGlyph
+Build completed successfully (3 jobs).
+
+============================================================================================
+HXC LEAN BUILD: PASSED
+============================================================================================
+Formal project: /content/HXCLean
+Lean source:    /content/HXCLean/HXC.lean
+All definitions and proofs were accepted by the Lean kernel.
