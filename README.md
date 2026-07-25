@@ -41,37 +41,39 @@ Xenoglyphic Mathematics
 
 Traditional mathematics usually begins with a predefined symbolic language:
 
-[
+$$
 +, -, \times, \div, =, \int, \sum, \forall, \exists
-]
+$$
 
 HXC begins with an extensible glyph universe:
 
-[
+$$
 \boldsymbol{\Sigma}_{\infty}
 
-{
+\left{
 \triangle,
-;;\text{⟁},
-;;\text{⟜},
-;;\text{⌬},
-;;\text{⧉},
-;;\text{⧖},
-;;\text{⥁},
-;;\text{⫷},
-;;\text{⫸},
-;;\text{⟡},
-;;\text{⍉},
-;;\text{⋇},
+\text{⟁},
+\text{⟜},
+\text{⌬},
+\text{⧉},
+\text{⧖},
+\text{⥁},
+\text{⫷},
+\text{⫸},
+\text{⟡},
+\text{⍉},
+\text{⋇},
 \ldots
-}
-]
+\right}
+$$
 
 There is no requirement that the alphabet be complete.
 
-[
-|\boldsymbol{\Sigma}_{\infty}| \not\equiv \text{fixed}
-]
+$$
+\left|\boldsymbol{\Sigma}_{\infty}\right|
+\not\equiv
+\text{fixed}
+$$
 
 The notation can grow whenever a previously unnamed transformation is discovered.
 
@@ -91,7 +93,7 @@ The symbols are not merely decorative. Each glyph must be assigned:
 
 A Xenoglyphic system is defined as
 
-[
+$$
 \mathfrak{X}
 
 \left(
@@ -102,7 +104,7 @@ A Xenoglyphic system is defined as
 \mathcal{R},
 \mathcal{E}
 \right)
-]
+$$
 
 where:
 
@@ -115,13 +117,13 @@ where:
 
 The extension mechanism is essential:
 
-[
+$$
 \mathcal{E}
 :
 (\mathfrak{X},P)
 \longrightarrow
 (\mathfrak{X}’,\sigma_P)
-]
+$$
 
 A problem (P) may generate a new system (\mathfrak{X}’) containing a newly defined glyph (\sigma_P).
 
@@ -133,9 +135,9 @@ The language therefore changes in response to the structures it encounters.
 
 ⟁ — Structural Difference
 
-[
+$$
 A ;\text{⟁}; B
-]
+$$
 
 means:
 
@@ -143,13 +145,15 @@ Compare (A) and (B) by structure rather than by numerical distance.
 
 Possible output:
 
-[
+$$
 A ;\text{⟁}; B
 
-(\Delta_{\mathrm{form}},
+\left(
+\Delta_{\mathrm{form}},
 \Delta_{\mathrm{meaning}},
-\Delta_{\mathrm{behaviour}})
-]
+\Delta_{\mathrm{behaviour}}
+\right)
+$$
 
 Unlike subtraction, ⟁ may compare algorithms, theories, stories, geometries, strategies, or conceptual systems.
 
@@ -157,9 +161,9 @@ Unlike subtraction, ⟁ may compare algorithms, theories, stories, geometries, s
 
 ⟜ — HyperMorphic Transport
 
-[
+$$
 A ;\text{⟜}_{\phi}; B
-]
+$$
 
 means:
 
@@ -167,14 +171,14 @@ Transport (A) into the representational world of (B) using transformation law (\
 
 The result does not need to be identical to (A), but specified invariants must survive:
 
-[
+$$
 \mathcal{I}(A)
 
 \mathcal{I}
 \left(
 A ;\text{⟜}_{\phi}; B
 \right)
-]
+$$
 
 This separates identity from recoverable meaning.
 
@@ -182,9 +186,9 @@ This separates identity from recoverable meaning.
 
 ⌬ — Resonance
 
-[
+$$
 A ;\text{⌬}; B
-]
+$$
 
 means:
 
@@ -192,13 +196,13 @@ Extract the latent pattern shared by two apparently different objects.
 
 For example:
 
-[
+$$
 \text{river}
 ;\text{⌬};
 \text{electrical circuit}
 
 \text{directed flow through constrained pathways}
-]
+$$
 
 The result is not a literal equality. It is a shared structural abstraction.
 
@@ -206,9 +210,9 @@ The result is not a literal equality. It is a shared structural abstraction.
 
 ⧉ — Invariant Fusion
 
-[
+$$
 A ;\text{⧉}_{I}; B
-]
+$$
 
 means:
 
@@ -216,35 +220,44 @@ Fuse (A) and (B) while preserving invariant set (I).
 
 If
 
-[
-I={\text{causality},\text{reversibility},\text{identity}},
-]
+$$
+I
+
+{
+\text{causality},
+\text{reversibility},
+\text{identity}
+},
+$$
 
 then only combinations preserving those properties are admissible.
 
 The fusion succeeds when
 
-[
-I(A ;\text{⧉}_{I}; B)
+$$
+I
+\left(
+A ;\text{⧉}_{I}; B
+\right)
 
 I(A)\cap I(B).
-]
+$$
 
 Otherwise:
 
-[
+$$
 A ;\text{⧉}_{I}; B
 
 \varnothing_I.
-]
+$$
 
 ⸻
 
 ⧖ — Temporal Folding
 
-[
+$$
 A_t ;\text{⧖}; A_{t+k}
-]
+$$
 
 means:
 
@@ -252,13 +265,17 @@ Treat two temporal states as a single folded object so their mutual constraints 
 
 A simple folded history is
 
-[
+$$
 \mathcal{H}_{t,k}
 
-A_t ;\text{⧖}; A_{t+1}
-;\text{⧖}\cdots\text{⧖};
+A_t
+;\text{⧖};
+A_{t+1}
+;\text{⧖};
+\cdots
+;\text{⧖};
 A_{t+k}.
-]
+$$
 
 This can represent memory, anticipation, path dependence, or delayed consequences without claiming literal backward causation.
 
@@ -266,9 +283,9 @@ This can represent memory, anticipation, path dependence, or delayed consequence
 
 ⥁ — Recursive Return
 
-[
+$$
 \text{⥁}^{n}(A)
-]
+$$
 
 means:
 
@@ -276,47 +293,52 @@ Reapply an object’s own transformation logic to itself (n) times.
 
 A stable recursive object satisfies
 
-[
-\text{⥁}(A^\star)=A^\star.
-]
+$$
+\text{⥁}(A^\star)
+
+A^\star.
+$$
 
 An emergent cycle satisfies
 
-[
-\text{⥁}^{k}(A)=A
-\quad\text{for some }k>1.
-]
+$$
+\text{⥁}^{k}(A)
+
+A
+\qquad
+\text{for some }k>1.
+$$
 
 ⸻
 
 ⟡ — Latent Possibility
 
-[
+$$
 \text{⟡}(A)
-]
+$$
 
 denotes structures that are compatible with (A) but not yet expressed by it.
 
 It is the space of adjacent symbolic possibilities:
 
-[
+$$
 \text{⟡}(A)
 
-{
+\left{
 B
-\mid
+;\middle|;
 B\text{ is reachable from }A
 \text{ without violating }I_A
-}.
-]
+\right}.
+$$
 
 ⸻
 
-⫷ A ⫸_C — Constraint World
+⫷ A ⫸(_C) — Constraint World
 
-[
+$$
 \text{⫷}A\text{⫸}_{C}
-]
+$$
 
 means:
 
@@ -324,11 +346,11 @@ Interpret (A) only inside constraint environment (C).
 
 The same object may behave differently in different worlds:
 
-[
+$$
 \text{⫷}A\text{⫸}{C_1}
 \neq
 \text{⫷}A\text{⫸}{C_2}.
-]
+$$
 
 This notation makes context mathematically visible.
 
@@ -336,9 +358,9 @@ This notation makes context mathematically visible.
 
 ⍉ — Perspective Rotation
 
-[
+$$
 \text{⍉}_{\theta}(A)
-]
+$$
 
 means:
 
@@ -346,20 +368,22 @@ Rotate the descriptive perspective of (A) without necessarily changing its under
 
 For an invariant perspective rotation:
 
-[
+$$
 \mathcal{I}
 \left(
 \text{⍉}_{\theta}(A)
 \right)
 
 \mathcal{I}(A).
-]
+$$
 
 For a complete perspective orbit:
 
-[
-\text{⍉}_{2\pi}(A)\cong A.
-]
+$$
+\text{⍉}_{2\pi}(A)
+\cong
+A.
+$$
 
 The relation is written as an isomorphism rather than strict equality because the representation may accumulate symbolic holonomy.
 
@@ -367,9 +391,9 @@ The relation is written as an isomorphism rather than strict equality because th
 
 ⋇ — Emergent Composition
 
-[
+$$
 A ;\text{⋇}; B
-]
+$$
 
 means:
 
@@ -377,13 +401,16 @@ Combine (A) and (B) so the result may possess properties found in neither input 
 
 Thus:
 
-[
-\operatorname{Prop}(A\text{ ⋇ }B)
+$$
+\operatorname{Prop}
+\left(
+A\text{ ⋇ }B
+\right)
 \supsetneq
 \operatorname{Prop}(A)
 \cup
 \operatorname{Prop}(B)
-]
+$$
 
 may be permitted.
 
@@ -393,22 +420,22 @@ The operator is useful for modelling emergence, synthesis, invention, and collec
 
 ⫯ — Productive Contradiction
 
-[
+$$
 A ;\text{⫯}; \neg A
-]
+$$
 
 does not immediately collapse the entire system.
 
 Instead, it creates a bifurcation object:
 
-[
+$$
 A ;\text{⫯}; \neg A
 
 \left{
 \text{⫷}A\text{⫸}{C_A},
 \text{⫷}\neg A\text{⫸}{C_{\neg A}}
 \right}.
-]
+$$
 
 The contradiction is resolved by discovering the contexts in which each statement is valid.
 
@@ -418,50 +445,45 @@ The contradiction is resolved by discovering the contexts in which each statemen
 
 A basic HXC expression may be generated by
 
-[
-E ::=
-x
-\mid
-\text{⫷}E\text{⫸}{C}
-\mid
-E\text{ ⟁ }E
-\mid
-E\text{ ⌬ }E
-\mid
-E\text{ ⧉}{I}E
-\mid
-E\text{ ⟜}{\phi}E
-\mid
-E\text{ ⋇ }E
-\mid
-\text{⍉}{\theta}(E)
-\mid
-\text{⥁}^{n}(E)
-\mid
-E\text{ ⧖ }E.
-]
+$$
+\begin{aligned}
+E ::= {}&
+x \
+&\mid \text{⫷}E\text{⫸}{C} \
+&\mid E\text{ ⟁ }E \
+&\mid E\text{ ⌬ }E \
+&\mid E\text{ ⧉}{I}E \
+&\mid E\text{ ⟜}{\phi}E \
+&\mid E\text{ ⋇ }E \
+&\mid \text{⍉}{\theta}(E) \
+&\mid \text{⥁}^{n}(E) \
+&\mid E\text{ ⧖ }E.
+\end{aligned}
+$$
 
 Every well-formed expression must be type-checkable.
 
 For example, if
 
-[
+$$
 A:\mathsf{Theory}
 \qquad
 B:\mathsf{Theory},
-]
+$$
 
 then
 
-[
-A\text{ ⟁ }B:\mathsf{StructuralDifference}.
-]
+$$
+A\text{ ⟁ }B
+:
+\mathsf{StructuralDifference}.
+$$
 
 However, the expression
 
-[
+$$
 A\text{ ⧖ }7
-]
+$$
 
 is invalid unless a temporal interpretation of (7) has been explicitly registered.
 
@@ -471,43 +493,43 @@ is invalid unless a temporal interpretation of (7) has been explicitly registere
 
 HXC distinguishes ordinary equality from several weaker relations.
 
-Exact equality
+Exact Equality
 
-[
+$$
 A=B
-]
+$$
 
 The objects are identical under the current formal semantics.
 
-Structural equivalence
+Structural Equivalence
 
-[
+$$
 A\cong_{\mathrm{X}}B
-]
+$$
 
 The objects possess equivalent structural organisation.
 
-Invariant equivalence
+Invariant Equivalence
 
-[
+$$
 A\equiv_I B
-]
+$$
 
 The objects preserve the same selected invariants.
 
-Metaphorical correspondence
+Metaphorical Correspondence
 
-[
+$$
 A\sim_{\mu}B
-]
+$$
 
 The objects share a declared metaphorical mapping (\mu).
 
-Recoverable transformation
+Recoverable Transformation
 
-[
+$$
 A\rightsquigarrow_I B
-]
+$$
 
 The representation changes, but (A) remains recoverable from (B) under invariant set (I).
 
@@ -519,13 +541,13 @@ These relations must not be silently substituted for one another.
 
 In ordinary mathematics, a solution may be a value:
 
-[
+$$
 x=4.
-]
+$$
 
 In HXC, a solution may instead be a transformation path:
 
-[
+$$
 \mathcal{S}
 
 P_0
@@ -537,7 +559,7 @@ P_2
 D
 ;\text{⧉}_{I};
 P^\star.
-]
+$$
 
 This reads:
 
@@ -555,42 +577,53 @@ Example 1 — Resolving a False Binary
 
 Suppose a system presents two apparently incompatible strategies:
 
-[
-A=\text{maximum security}
-]
+$$
+A
 
-[
-B=\text{maximum usability}.
-]
+\text{maximum security}
+$$
+
+$$
+B
+
+\text{maximum usability}.
+$$
 
 The naïve framing is
 
-[
-A\text{ versus }B.
-]
+$$
+A
+\text{ versus }
+B.
+$$
 
 HXC first measures their structural difference:
 
-[
-D=A\text{ ⟁ }B.
-]
+$$
+D
+
+A\text{ ⟁ }B.
+$$
 
 It then searches for resonance:
 
-[
-R=A\text{ ⌬ }B.
-]
+$$
+R
+
+A\text{ ⌬ }B.
+$$
 
 A possible resonance is:
 
-[
-R=
+$$
+R
+
 \text{adaptive allocation of friction}.
-]
+$$
 
 The solution becomes
 
-[
+$$
 S
 
 A
@@ -599,17 +632,17 @@ A
 \text{accessibility}
 }};
 B.
-]
+$$
 
 One interpretation is:
 
-[
+$$
 S
 
 \text{high friction under high risk}
 +
 \text{low friction under low risk}.
-]
+$$
 
 The original contradiction was partly caused by a static representation.
 
@@ -619,35 +652,37 @@ Example 2 — Reframing Failure
 
 Let
 
-[
-F=\text{failed experiment}.
-]
+$$
+F
+
+\text{failed experiment}.
+$$
 
 Inside a result-only world:
 
-[
+$$
 \text{⫷}F\text{⫸}{C{\mathrm{result}}}
 
 \text{loss}.
-]
+$$
 
 Inside an information world:
 
-[
+$$
 \text{⫷}F\text{⫸}{C{\mathrm{information}}}
 
 \text{constraint discovered}.
-]
+$$
 
 The perspective transformation is
 
-[
+$$
 \text{⍉}{\theta}(F)
 :
 C{\mathrm{result}}
 \longrightarrow
 C_{\mathrm{information}}.
-]
+$$
 
 The event did not change.
 
@@ -666,15 +701,15 @@ Suppose a problem contains a transformation that is:
 
 HXC permits creation of a new symbol:
 
-[
+$$
 \text{҂}
-]
+$$
 
 with definition
 
-[
+$$
 A\text{ ҂}_{I}^{3}B
-]
+$$
 
 meaning:
 
@@ -682,17 +717,23 @@ A three-stage history-dependent transformation from (A) to (B) whose invariant (
 
 The intermediate states may violate (I):
 
-[
-I(A_1)\neq I(A),
+$$
+I(A_1)
+\neq
+I(A),
 \qquad
-I(A_2)\neq I(A),
-]
+I(A_2)
+\neq
+I(A),
+$$
 
 while the completed transformation satisfies
 
-[
-I(A_3)=I(A).
-]
+$$
+I(A_3)
+
+I(A).
+$$
 
 The symbol is admitted into the alphabet only after its semantics and tests are registered.
 
@@ -702,49 +743,57 @@ Example 4 — Cross-Domain Discovery
 
 Consider:
 
-[
-A=\text{immune system},
+$$
+A
+
+\text{immune system},
 \qquad
-B=\text{computer-security system}.
-]
+B
+
+\text{computer-security system}.
+$$
 
 Their literal objects differ:
 
-[
-A\neq B.
-]
+$$
+A
+\neq
+B.
+$$
 
 But a resonance operation may reveal:
 
-[
+$$
 A\text{ ⌬ }B
 
-{
+\left{
 \text{identity},
 \text{boundary},
 \text{memory},
 \text{anomaly detection},
 \text{adaptive response}
-}.
-]
+\right}.
+$$
 
 This permits a metaphorical correspondence:
 
-[
-A\sim_{\mu}B.
-]
+$$
+A
+\sim_{\mu}
+B.
+$$
 
 The mapping becomes useful only when its limits are also declared:
 
-[
+$$
 \mu_{\mathrm{invalid}}
 
-{
+\left{
 \text{biological intent},
 \text{perfect central control},
 \text{literal pathogen equivalence}
-}.
-]
+\right}.
+$$
 
 HXC therefore treats metaphors as typed mappings, not as proof by analogy.
 
@@ -754,29 +803,41 @@ Example 5 — Emergence
 
 Let
 
-[
-N_i=\text{a simple local agent}.
-]
+$$
+N_i
+
+\text{a simple local agent}.
+$$
 
 A single agent does not possess a global map:
 
-[
-\operatorname{Map}(N_i)=\varnothing.
-]
+$$
+\operatorname{Map}(N_i)
+
+\varnothing.
+$$
 
 A network of interacting agents may satisfy
 
-[
-N_1\text{ ⋇ }N_2\text{ ⋇ }\cdots\text{ ⋇ }N_n
+$$
+N_1
+\text{ ⋇ }
+N_2
+\text{ ⋇ }
+\cdots
+\text{ ⋇ }
+N_n
 
 \mathcal{N}.
-]
+$$
 
 Under appropriate communication constraints:
 
-[
-\operatorname{Map}(\mathcal{N})\neq\varnothing.
-]
+$$
+\operatorname{Map}(\mathcal{N})
+\neq
+\varnothing.
+$$
 
 The map is an emergent property of the composition rather than a hidden property of one isolated agent.
 
@@ -819,7 +880,7 @@ A glyph with declared semantics becomes a candidate mathematical operator.
 
 The HXC alphabet is open:
 
-[
+$$
 \Sigma_0
 \subset
 \Sigma_1
@@ -829,7 +890,7 @@ The HXC alphabet is open:
 \cdots
 \subset
 \Sigma_{\infty}.
-]
+$$
 
 A new glyph (\gamma) may be added when:
 
@@ -842,7 +903,7 @@ A new glyph (\gamma) may be added when:
 
 The admission rule is
 
-[
+$$
 \operatorname{Admit}(\gamma)
 \iff
 N(\gamma)
@@ -852,7 +913,7 @@ T(\gamma)
 S(\gamma)
 \land
 V(\gamma),
-]
+$$
 
 where:
 
@@ -863,9 +924,14 @@ where:
 
 There is no fixed upper bound:
 
-[
-\sup |\Sigma_n| = \infty.
-]
+$$
+\sup_n
+\left|
+\Sigma_n
+\right|
+
+\infty.
+$$
 
 ⸻
 
@@ -873,46 +939,51 @@ There is no fixed upper bound:
 
 Independent symbolic worlds may use different alphabets.
 
-[
+$$
 \Sigma^{(\alpha)}
 
-{
-\text{⟁},\text{⌬},\text{⟜}
-}
-]
+\left{
+\text{⟁},
+\text{⌬},
+\text{⟜}
+\right}
+$$
 
-[
+$$
 \Sigma^{(\beta)}
 
-{
-\text{҂},\text{꙰},\text{⸸},\text{⧗}
-}.
-]
+\left{
+\text{҂},
+\text{꙰},
+\text{⸸},
+\text{⧗}
+\right}.
+$$
 
 A translation between symbolic worlds is itself a mathematical object:
 
-[
+$$
 \mathcal{D}_{\alpha\rightarrow\beta}
 :
 \Sigma^{(\alpha)}
 \longrightarrow
 \Sigma^{(\beta)}.
-]
+$$
 
 A perfect translation preserves all declared meaning:
 
-[
+$$
 \mathcal{M}{\beta}
 \left(
 \mathcal{D}{\alpha\rightarrow\beta}(\sigma)
 \right)
 
 \mathcal{M}_{\alpha}(\sigma).
-]
+$$
 
 An imperfect translation generates semantic curvature:
 
-[
+$$
 \mathcal{K}_{\alpha\beta}(\sigma)
 
 \mathcal{M}{\beta}
@@ -921,7 +992,7 @@ An imperfect translation generates semantic curvature:
 \right)
 
 \mathcal{M}_{\alpha}(\sigma).
-]
+$$
 
 This makes mistranslation, conceptual drift, and representation loss measurable inside the framework.
 
@@ -939,7 +1010,7 @@ HXC extends this principle to mathematical language itself.
 
 The representation of the mathematics becomes dynamic:
 
-[
+$$
 \text{problem}
 \longrightarrow
 \text{notation}
@@ -947,17 +1018,17 @@ The representation of the mathematics becomes dynamic:
 \text{transformation}
 \longrightarrow
 \text{new notation}.
-]
+$$
 
 Instead of treating notation as a passive description, HXC treats notation as an active component of reasoning.
 
-[
+$$
 \text{Language}
 ;\text{⋇};
 \text{Problem}
 \longrightarrow
 \text{Expanded solution space}.
-]
+$$
 
 ⸻
 
@@ -965,11 +1036,11 @@ Instead of treating notation as a passive description, HXC treats notation as an
 
 Law I — Contextual Meaning
 
-[
+$$
 \mathcal{M}(\sigma)
 
 \mathcal{M}(\sigma\mid C).
-]
+$$
 
 No glyph has guaranteed meaning outside its declared context.
 
@@ -979,11 +1050,13 @@ Law II — Invariant Accountability
 
 Every transformation must state what it preserves:
 
-[
-A;\text{⟜}{\phi};B
+$$
+A
+;\text{⟜}{\phi};
+B
 \Rightarrow
 \exists I{\phi}.
-]
+$$
 
 ⸻
 
@@ -991,23 +1064,28 @@ Law III — Recoverable Interpretation
 
 A valid representational transformation must provide either an inverse or a declared recovery map:
 
-[
+$$
 \mathcal{R}{\phi}
 \left(
-A;\text{⟜}{\phi};B
+A
+;\text{⟜}{\phi};
+B
 \right)
-\cong_I A.
-]
+\cong_I
+A.
+$$
 
 ⸻
 
 Law IV — Metaphor Is Not Identity
 
-[
-A\sim_{\mu}B
+$$
+A
+\sim_{\mu}
+B
 \not\Rightarrow
 A=B.
-]
+$$
 
 A metaphorical correspondence must never silently become literal equality.
 
@@ -1017,12 +1095,13 @@ Law V — Symbolic Extensibility
 
 For any finite alphabet (\Sigma_n), there may exist a meaningful operation not efficiently expressible within it:
 
-[
-\forall \Sigma_n
-\quad
+$$
+\forall \Sigma_n,
+\qquad
 \exists \gamma
-\notin \Sigma_n.
-]
+\notin
+\Sigma_n.
+$$
 
 This is the Open Glyph Principle.
 
@@ -1032,17 +1111,19 @@ Law VI — Representation Changes Reachability
 
 For some problems (P), a solution may be unreachable in one notation but reachable after symbolic expansion:
 
-[
-S\notin
+$$
+S
+\notin
 \operatorname{Reach}_{\Sigma_n}(P),
-]
+$$
 
 while
 
-[
-S\in
+$$
+S
+\in
 \operatorname{Reach}_{\Sigma_n\cup{\gamma}}(P).
-]
+$$
 
 The notation does not merely shorten the solution.
 
@@ -1200,11 +1281,11 @@ We believe symbols can carry operational meaning, metaphorical meaning, transfor
 
 We believe an alphabet may evolve with the universe it is trying to describe.
 
-[
+$$
 \boxed{
 \text{The next mathematics may require symbols that do not yet exist.}
 }
-]
+$$
 
 ⸻
 
@@ -1228,7 +1309,7 @@ Suggested Citation
 
 ⟁ Closing Expression
 
-[
+$$
 \text{Known mathematics}
 ;\text{⟁};
 \text{unnamed structure}
@@ -1238,4 +1319,5 @@ Suggested Citation
 \text{formal semantics}
 
 \textbf{Xenoglyphic Mathematics}.
-]
+$$
+:
