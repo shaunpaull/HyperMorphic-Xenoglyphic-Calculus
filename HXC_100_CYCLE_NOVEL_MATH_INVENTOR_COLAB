@@ -4246,6 +4246,8 @@ if __name__ == "__main__":
 
 
 
+Can you check if it created anything novel and new
+
 ========================================================================================================
 HXC 100-CYCLE NOVEL STRUCTURE + THEOREM INVENTOR V7
 ========================================================================================================
@@ -4528,8 +4530,6 @@ theorem alien_not_quasigroup :
     decide
   exact differentInputs equalInputs
 
-
-
 /-! ## Nontrivial symmetry -/
 
 theorem discovered_identity_not_in_seed_library :
@@ -4570,7 +4570,6 @@ def identityDiscoveryCertificate :
   comparisonModelsTotal := 480
   historicalNoveltyVerified := false
 
-
 /-! ## Proof-carrying structure certificate -/
 
 def noveltyCertificate : NovelStructureCertificate where
@@ -4599,7 +4598,6 @@ def noveltyCertificate : NovelStructureCertificate where
   notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
   notMinimum := alien_not_isomorphic_to_minimum
   notMaximum := alien_not_isomorphic_to_maximum
-
 
 ========================================================================================================
 CYCLE 001/100 — VERIFIED
@@ -4805,8 +4803,6 @@ theorem alien_not_quasigroup :
     decide
   exact differentInputs equalInputs
 
-
-
 /-! ## Nontrivial symmetry -/
 
 theorem discovered_identity_not_in_seed_library :
@@ -4847,7 +4843,6 @@ def identityDiscoveryCertificate :
   comparisonModelsTotal := 480
   historicalNoveltyVerified := false
 
-
 /-! ## Proof-carrying structure certificate -/
 
 def noveltyCertificate : NovelStructureCertificate where
@@ -4876,7 +4871,6 @@ def noveltyCertificate : NovelStructureCertificate where
   notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
   notMinimum := alien_not_isomorphic_to_minimum
   notMaximum := alien_not_isomorphic_to_maximum
-
 
 ========================================================================================================
 CYCLE 002/100 — VERIFIED
@@ -5086,8 +5080,6 @@ theorem alien_not_quasigroup :
     decide
   exact differentInputs equalInputs
 
-
-
 /-! ## Nontrivial symmetry -/
 
 theorem discovered_identity_not_in_seed_library :
@@ -5128,7 +5120,6 @@ def identityDiscoveryCertificate :
   comparisonModelsTotal := 480
   historicalNoveltyVerified := false
 
-
 /-! ## Proof-carrying structure certificate -/
 
 def noveltyCertificate : NovelStructureCertificate where
@@ -5158,9 +5149,1408 @@ def noveltyCertificate : NovelStructureCertificate where
   notMinimum := alien_not_isomorphic_to_minimum
   notMaximum := alien_not_isomorphic_to_maximum
 
-
 ========================================================================================================
 CYCLE 003/100 — VERIFIED
 ========================================================================================================
 Saved: /content/HXC100CycleNovelMath/cycle_003
 
+========================================================================================================
+CYCLE 004/100 — ATTEMPT 1/5 — SEED 2029
+========================================================================================================
+Unicode: 🡰 ⥬ 𝦜 ⊁
+Glyph metadata:
+  structure  🡰 U+1F870 WIDE-HEADED LEFTWARDS MEDIUM BARB ARROW [So]
+  operation  ⥬ U+296C RIGHTWARDS HARPOON WITH BARB UP ABOVE LONG DASH [Sm]
+  symmetry   𝦜 U+1D99C SIGNWRITING MOVEMENT-WALLPLANE WAVE CURVE TRIPLE SMALL [So]
+  identity   ⊁ U+2281 DOES NOT SUCCEED [Sm]
+Operation table:
+  0 2 1 0
+  2 1 0 1
+  1 0 2 2
+  3 3 2 3
+Positive laws: idempotent, flexible, surjective
+Discovered identity: ((x ⥬ (x ⥬ w)) ⥬ ((x ⥬ y) ⥬ (x ⥬ z))) = (((x ⥬ z) ⥬ x) ⥬ ((x ⥬ w) ⥬ (x ⥬ y)))
+Comparison failures: 433/480
+Countermodel: reference:right_projection
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    22976 lines=  661 sha256=cbeeed013759f8b8f229b9736da0542e33f1786ff676c6f99bdf1e5ad9dc34d1
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5300 lines=  155 sha256=d93e28a78997c9094d4d171f1151ee0e76eeb18deaf4594cc3c7d8d9a961e640
+novel_structure.json           bytes=     6825 lines=  269 sha256=554d273ba0defb332d483d905373ee2809833a8e6bb7e9dbcb824cf3c65a42dd
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=      991 lines=   52 sha256=35f286af3ecf53d7d0f8f9e49ba9103013ebe487526765a2fac135e9e2c68cbf
+cycle_unicode.json             bytes=      589 lines=   26 sha256=4e17bda7a3cc78d393392391cc95f93754214da648853daac2c024e82df42026
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[0, 2, 1, 0], [2, 1, 0, 1], [1, 0, 2, 2], [3, 3, 2, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw x (alienLaw x w)) (alienLaw (alienLaw x y) (alienLaw x z)) =
+    alienLaw (alienLaw (alienLaw x z) x) (alienLaw (alienLaw x w) (alienLaw x y))
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 0))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 1) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 0) (mkCarrier 1))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (4.0s)
+info: HXCNovel.lean:640:0: [[0, 2, 1, 0], [2, 1, 0, 1], [1, 0, 2, 2], [3, 3, 2, 3]]
+info: HXCNovel.lean:641:0: [1, 0, 2, 3]
+info: HXCNovel.lean:643:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:644:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:645:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:646:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:647:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:648:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:649:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:650:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:651:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:652:0: HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw x (alienLaw x w)) (alienLaw (alienLaw x y) (alienLaw x z)) =
+    alienLaw (alienLaw (alienLaw x z) x) (alienLaw (alienLaw x w) (alienLaw x y))
+info: HXCNovel.lean:653:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 0))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+info: HXCNovel.lean:654:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:655:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:656:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:657:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 1) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 0) (mkCarrier 1))
+info: HXCNovel.lean:658:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:659:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 004 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  🡰  U+1F870  WIDE-HEADED LEFTWARDS MEDIUM BARB ARROW  [So]
+OPERATION  ⥬  U+296C  RIGHTWARDS HARPOON WITH BARB UP ABOVE LONG DASH  [Sm]
+SYMMETRY   𝦜  U+1D99C  SIGNWRITING MOVEMENT-WALLPLANE WAVE CURVE TRIPLE SMALL  [So]
+IDENTITY   ⊁  U+2281  DOES NOT SUCCEED  [Sm]
+
+OPERATION TABLE
+  0 2 1 0
+  2 1 0 1
+  1 0 2 2
+  3 3 2 3
+
+POSITIVE LAWS
+  idempotent, flexible, surjective
+
+DISCOVERED IDENTITY
+  ((x ⥬ (x ⥬ w)) ⥬ ((x ⥬ y) ⥬ (x ⥬ z))) = (((x ⥬ z) ⥬ x) ⥬ ((x ⥬ w) ⥬ (x ⥬ y)))
+  comparison failures: 433/480
+  countermodel: reference:right_projection
+  assignment: {'x': 0, 'y': 0, 'z': 1, 'w': 0}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 1)
+      (mkCarrier 3)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 1) (mkCarrier 3)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 1))
+        (alienLaw (mkCarrier 0) (mkCarrier 3)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 3)
+      (mkCarrier 2)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 3))
+        (mkCarrier 2) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 2))
+        (alienLaw (mkCarrier 3) (mkCarrier 2)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 0) (mkCarrier 0) =
+      alienLaw (mkCarrier 0) (mkCarrier 3) := by
+    decide
+  have equalInputs :
+      mkCarrier 0 = mkCarrier 3 :=
+    h.1.1
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 3)
+      sameOutput
+  have differentInputs :
+      mkCarrier 0 ≠ mkCarrier 3 := by
+    decide
+  exact differentInputs equalInputs
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw (x) (alienLaw (x) (w))) (alienLaw (alienLaw (x) (y)) (alienLaw (x) (z))) =
+      alienLaw (alienLaw (alienLaw (x) (z)) (x)) (alienLaw (alienLaw (x) (w)) (alienLaw (x) (y))) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 0)) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⊁"
+  canonicalCode := discoveredIdentityCode
+  displayText := "((x \u296c (x \u296c w)) \u296c ((x \u296c y) \u296c (x \u296c z))) = (((x \u296c z) \u296c x) \u296c ((x \u296c w) \u296c (x \u296c y)))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 47
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "🡰"
+  operationGlyph := "⥬"
+  symmetryGlyph := "𝦜"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["idempotent", "flexible", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "8f96ad691c017432ba18e211b53b8fabbb08444d0dd5bbf351dd4dc1a0a72b2d"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+========================================================================================================
+CYCLE 004/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_004
+
+========================================================================================================
+CYCLE 005/100 — ATTEMPT 1/5 — SEED 2030
+========================================================================================================
+Unicode: ㌟ ⟼ 𝁜 ⥶
+Glyph metadata:
+  structure  ㌟ U+331F SQUARE SAIKURU [So]
+  operation  ⟼ U+27FC LONG RIGHTWARDS ARROW FROM BAR [Sm]
+  symmetry   𝁜 U+1D05C BYZANTINE MUSICAL SYMBOL ANTIKENOMA [So]
+  identity   ⥶ U+2976 LESS-THAN ABOVE LEFTWARDS ARROW [Sm]
+Operation table:
+  0 3 1 2
+  3 1 0 2
+  1 0 2 3
+  2 2 3 3
+Positive laws: commutative, idempotent, flexible, surjective
+Discovered identity: ((w ⟼ (y ⟼ y)) ⟼ ((x ⟼ x) ⟼ z)) = ((x ⟼ z) ⟼ ((w ⟼ y) ⟼ (y ⟼ w)))
+Comparison failures: 456/480
+Countermodel: reference:left_projection
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    22650 lines=  658 sha256=a2fcf934fb014869112b45a8fc1b399b404237866808c87fb1e5f769ed299f30
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5227 lines=  155 sha256=28fa4b1f9cda0a1fc4e615db6ea826356ea1896aa4566a799d84ed9626ac20a2
+novel_structure.json           bytes=     6689 lines=  268 sha256=f87bf856bd54e82d988c90aa19fc8a3272da7ff2c7a2971c9eeb682d2c45c8c9
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=      930 lines=   52 sha256=680f8c3297aaa15d8c3fcc31bf3fe4e5a3227810cbc8efd92cfab5f99d288603
+cycle_unicode.json             bytes=      541 lines=   26 sha256=5b41f8ea5b9045d084959fcc7906746959ca6fd657903bad7b776f103dd8d50d
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[0, 3, 1, 2], [3, 1, 0, 2], [1, 0, 2, 3], [2, 2, 3, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw w (alienLaw y y)) (alienLaw (alienLaw x x) z) =
+    alienLaw (alienLaw x z) (alienLaw (alienLaw w y) (alienLaw y w))
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 1) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0)) ≠
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 1) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 0) (mkCarrier 1))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (3.3s)
+info: HXCNovel.lean:637:0: [[0, 3, 1, 2], [3, 1, 0, 2], [1, 0, 2, 3], [2, 2, 3, 3]]
+info: HXCNovel.lean:638:0: [1, 0, 2, 3]
+info: HXCNovel.lean:640:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:641:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:642:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:643:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:644:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:645:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:646:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:647:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:648:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:649:0: HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw w (alienLaw y y)) (alienLaw (alienLaw x x) z) =
+    alienLaw (alienLaw x z) (alienLaw (alienLaw w y) (alienLaw y w))
+info: HXCNovel.lean:650:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 1) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0)) ≠
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+info: HXCNovel.lean:651:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:652:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:653:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:654:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 1) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 0) (mkCarrier 1))
+info: HXCNovel.lean:655:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:656:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 005 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  ㌟  U+331F  SQUARE SAIKURU  [So]
+OPERATION  ⟼  U+27FC  LONG RIGHTWARDS ARROW FROM BAR  [Sm]
+SYMMETRY   𝁜  U+1D05C  BYZANTINE MUSICAL SYMBOL ANTIKENOMA  [So]
+IDENTITY   ⥶  U+2976  LESS-THAN ABOVE LEFTWARDS ARROW  [Sm]
+
+OPERATION TABLE
+  0 3 1 2
+  3 1 0 2
+  1 0 2 3
+  2 2 3 3
+
+POSITIVE LAWS
+  commutative, idempotent, flexible, surjective
+
+DISCOVERED IDENTITY
+  ((w ⟼ (y ⟼ y)) ⟼ ((x ⟼ x) ⟼ z)) = ((x ⟼ z) ⟼ ((w ⟼ y) ⟼ (y ⟼ w)))
+  comparison failures: 456/480
+  countermodel: reference:left_projection
+  assignment: {'x': 0, 'y': 0, 'z': 0, 'w': 1}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 1)
+      (mkCarrier 2)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 1) (mkCarrier 2)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 1))
+        (alienLaw (mkCarrier 0) (mkCarrier 2)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 1)
+      (mkCarrier 3)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 1))
+        (mkCarrier 3) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 3))
+        (alienLaw (mkCarrier 1) (mkCarrier 3)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 3) (mkCarrier 0) =
+      alienLaw (mkCarrier 3) (mkCarrier 1) := by
+    decide
+  have equalInputs :
+      mkCarrier 0 = mkCarrier 1 :=
+    h.1.1
+      (mkCarrier 3)
+      (mkCarrier 0)
+      (mkCarrier 1)
+      sameOutput
+  have differentInputs :
+      mkCarrier 0 ≠ mkCarrier 1 := by
+    decide
+  exact differentInputs equalInputs
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw (w) (alienLaw (y) (y))) (alienLaw (alienLaw (x) (x)) (z)) =
+      alienLaw (alienLaw (x) (z)) (alienLaw (alienLaw (w) (y)) (alienLaw (y) (w))) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (mkCarrier 1) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0)) ≠
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⥶"
+  canonicalCode := discoveredIdentityCode
+  displayText := "((w \u27fc (y \u27fc y)) \u27fc ((x \u27fc x) \u27fc z)) = ((x \u27fc z) \u27fc ((w \u27fc y) \u27fc (y \u27fc w)))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 24
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "㌟"
+  operationGlyph := "⟼"
+  symmetryGlyph := "𝁜"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["commutative", "idempotent", "flexible", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "fb04165aa2840888cee810a0be4feda406f949c32441cdf08355e1e9851a56fb"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+========================================================================================================
+CYCLE 005/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_005
+
+========================================================================================================
+CYCLE 006/100 — ATTEMPT 1/5 — SEED 2031
+========================================================================================================
+Unicode: 🙯 ⊅ 𐄹 ⟠
+Glyph metadata:
+  structure  🙯 U+1F66F DOWNWARDS ROCKET [So]
+  operation  ⊅ U+2285 NOT A SUPERSET OF [Sm]
+  symmetry   𐄹 U+10139 AEGEAN WEIGHT SECOND SUBUNIT [So]
+  identity   ⟠ U+27E0 LOZENGE DIVIDED BY HORIZONTAL RULE [Sm]
+Operation table:
+  1 2 0 3
+  2 0 1 3
+  0 1 2 2
+  0 1 2 3
+Positive laws: left_alternative, right_alternative, surjective
+Discovered identity: (((w ⊅ w) ⊅ (x ⊅ w)) ⊅ ((z ⊅ w) ⊅ (y ⊅ w))) = (((x ⊅ w) ⊅ (y ⊅ w)) ⊅ ((z ⊅ w) ⊅ (w ⊅ w)))
+Comparison failures: 418/480
+Countermodel: reference:left_projection
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    23036 lines=  653 sha256=95274f162418a079dcf9009b122d6e04324ed447dc23c1982d440eecfb5d3248
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5276 lines=  155 sha256=17dba6be2a1c5d793241a64f52f04797887d14a4a3260cd3f21624c0837e7ba9
+novel_structure.json           bytes=     6812 lines=  269 sha256=cfaf9ce82a48cfa1c0dffc23b70c5c32c7b4a46de0754125b4de1a944ad423c9
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=     1032 lines=   52 sha256=2ac84a2ae1960c76c371be299496bcd9dc46d9c6860fa87286135cb11b7f49a3
+cycle_unicode.json             bytes=      528 lines=   26 sha256=e6cced1a5187f41f51f0a75a23e251be102ba5372e9a54f3bb5062553f463c52
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[1, 2, 0, 3], [2, 0, 1, 3], [0, 1, 2, 2], [0, 1, 2, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw (alienLaw w w) (alienLaw x w)) (alienLaw (alienLaw z w) (alienLaw y w)) =
+    alienLaw (alienLaw (alienLaw x w) (alienLaw y w)) (alienLaw (alienLaw z w) (alienLaw w w))
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 1) (mkCarrier 1)))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 3) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 3))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (3.6s)
+info: HXCNovel.lean:632:0: [[1, 2, 0, 3], [2, 0, 1, 3], [0, 1, 2, 2], [0, 1, 2, 3]]
+info: HXCNovel.lean:633:0: [1, 0, 2, 3]
+info: HXCNovel.lean:635:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:636:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:637:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:638:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:639:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:640:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:641:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:642:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:643:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:644:0: HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw (alienLaw w w) (alienLaw x w)) (alienLaw (alienLaw z w) (alienLaw y w)) =
+    alienLaw (alienLaw (alienLaw x w) (alienLaw y w)) (alienLaw (alienLaw z w) (alienLaw w w))
+info: HXCNovel.lean:645:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 1) (mkCarrier 1)))
+info: HXCNovel.lean:646:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:647:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:648:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:649:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 3) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 3))
+info: HXCNovel.lean:650:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:651:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 006 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  🙯  U+1F66F  DOWNWARDS ROCKET  [So]
+OPERATION  ⊅  U+2285  NOT A SUPERSET OF  [Sm]
+SYMMETRY   𐄹  U+10139  AEGEAN WEIGHT SECOND SUBUNIT  [So]
+IDENTITY   ⟠  U+27E0  LOZENGE DIVIDED BY HORIZONTAL RULE  [Sm]
+
+OPERATION TABLE
+  1 2 0 3
+  2 0 1 3
+  0 1 2 2
+  0 1 2 3
+
+POSITIVE LAWS
+  left_alternative, right_alternative, surjective
+
+DISCOVERED IDENTITY
+  (((w ⊅ w) ⊅ (x ⊅ w)) ⊅ ((z ⊅ w) ⊅ (y ⊅ w))) = (((x ⊅ w) ⊅ (y ⊅ w)) ⊅ ((z ⊅ w) ⊅ (w ⊅ w)))
+  comparison failures: 418/480
+  countermodel: reference:left_projection
+  assignment: {'x': 0, 'y': 0, 'z': 0, 'w': 1}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (mkCarrier 0) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 2) (mkCarrier 2) =
+      alienLaw (mkCarrier 2) (mkCarrier 3) := by
+    decide
+  have equalInputs :
+      mkCarrier 2 = mkCarrier 3 :=
+    h.1.1
+      (mkCarrier 2)
+      (mkCarrier 2)
+      (mkCarrier 3)
+      sameOutput
+  have differentInputs :
+      mkCarrier 2 ≠ mkCarrier 3 := by
+    decide
+  exact differentInputs equalInputs
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw (alienLaw (w) (w)) (alienLaw (x) (w))) (alienLaw (alienLaw (z) (w)) (alienLaw (y) (w))) =
+      alienLaw (alienLaw (alienLaw (x) (w)) (alienLaw (y) (w))) (alienLaw (alienLaw (z) (w)) (alienLaw (w) (w))) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 1)) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (identityCounterLaw (mkCarrier 1) (mkCarrier 1))) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⟠"
+  canonicalCode := discoveredIdentityCode
+  displayText := "(((w \u2285 w) \u2285 (x \u2285 w)) \u2285 ((z \u2285 w) \u2285 (y \u2285 w))) = (((x \u2285 w) \u2285 (y \u2285 w)) \u2285 ((z \u2285 w) \u2285 (w \u2285 w)))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 62
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "🙯"
+  operationGlyph := "⊅"
+  symmetryGlyph := "𐄹"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["left_alternative", "right_alternative", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "2cfa8e9fe6399c4911c4c2ab671f960b77e413167c0489220e83b09ef2601017"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+========================================================================================================
+CYCLE 006/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_006
+
+========================================================================================================
+CYCLE 007/100 — ATTEMPT 1/5 — SEED 2032
+========================================================================================================
+Unicode: ⌫ ⧩ 🚢 ⪿
+Glyph metadata:
+  structure  ⌫ U+232B ERASE TO THE LEFT [So]
+  operation  ⧩ U+29E9 DOWN-POINTING TRIANGLE WITH RIGHT HALF BLACK [Sm]
+  symmetry   🚢 U+1F6A2 SHIP [So]
+  identity   ⪿ U+2ABF SUBSET WITH PLUS SIGN BELOW [Sm]
+Operation table:
+  1 2 0 0
+  2 0 1 1
+  0 1 2 2
+  3 3 2 3
+Positive laws: left_alternative, right_alternative, surjective
+Discovered identity: (((x ⧩ y) ⧩ (x ⧩ z)) ⧩ ((y ⧩ w) ⧩ (y ⧩ z))) = (((x ⧩ z) ⧩ (x ⧩ y)) ⧩ ((y ⧩ z) ⧩ (y ⧩ w)))
+Comparison failures: 412/480
+Countermodel: reference:right_projection
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    23025 lines=  653 sha256=631b5a91c1d5393af8bb4b840c1b4320ce42135518d31e8468028625fe8e835c
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5273 lines=  155 sha256=92bc70ebfc36a876a84a8c67cbcf6e4b8f361fd527242e434e719df9e2333356
+novel_structure.json           bytes=     6848 lines=  270 sha256=a01905cc3c732abfca2a1552f5c6ce2e520fbbf31f1bb573c14274742c96e0e3
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=     1032 lines=   52 sha256=1a647d5bf743fd1cdf0178532d44319455b2326716adcd2340b9d075c6c6b648
+cycle_unicode.json             bytes=      523 lines=   26 sha256=f628a7ba73a3e8a9559cd3f8b3da360d2d7e89feb7cca98121d13f63a152c3e9
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[1, 2, 0, 0], [2, 0, 1, 1], [0, 1, 2, 2], [3, 3, 2, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw (alienLaw x y) (alienLaw x z)) (alienLaw (alienLaw y w) (alienLaw y z)) =
+    alienLaw (alienLaw (alienLaw x z) (alienLaw x y)) (alienLaw (alienLaw y z) (alienLaw y w))
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 3)) (mkCarrier 0) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 3) (mkCarrier 0))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (3.7s)
+info: HXCNovel.lean:632:0: [[1, 2, 0, 0], [2, 0, 1, 1], [0, 1, 2, 2], [3, 3, 2, 3]]
+info: HXCNovel.lean:633:0: [1, 0, 2, 3]
+info: HXCNovel.lean:635:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:636:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:637:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:638:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:639:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:640:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:641:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:642:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:643:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:644:0: HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw (alienLaw x y) (alienLaw x z)) (alienLaw (alienLaw y w) (alienLaw y z)) =
+    alienLaw (alienLaw (alienLaw x z) (alienLaw x y)) (alienLaw (alienLaw y z) (alienLaw y w))
+info: HXCNovel.lean:645:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 1)))
+info: HXCNovel.lean:646:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:647:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:648:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:649:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 3)) (mkCarrier 0) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 3) (mkCarrier 0))
+info: HXCNovel.lean:650:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:651:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 007 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  ⌫  U+232B  ERASE TO THE LEFT  [So]
+OPERATION  ⧩  U+29E9  DOWN-POINTING TRIANGLE WITH RIGHT HALF BLACK  [Sm]
+SYMMETRY   🚢  U+1F6A2  SHIP  [So]
+IDENTITY   ⪿  U+2ABF  SUBSET WITH PLUS SIGN BELOW  [Sm]
+
+OPERATION TABLE
+  1 2 0 0
+  2 0 1 1
+  0 1 2 2
+  3 3 2 3
+
+POSITIVE LAWS
+  left_alternative, right_alternative, surjective
+
+DISCOVERED IDENTITY
+  (((x ⧩ y) ⧩ (x ⧩ z)) ⧩ ((y ⧩ w) ⧩ (y ⧩ z))) = (((x ⧩ z) ⧩ (x ⧩ y)) ⧩ ((y ⧩ z) ⧩ (y ⧩ w)))
+  comparison failures: 412/480
+  countermodel: reference:right_projection
+  assignment: {'x': 0, 'y': 0, 'z': 0, 'w': 1}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (mkCarrier 0) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 0) (mkCarrier 2) =
+      alienLaw (mkCarrier 0) (mkCarrier 3) := by
+    decide
+  have equalInputs :
+      mkCarrier 2 = mkCarrier 3 :=
+    h.1.1
+      (mkCarrier 0)
+      (mkCarrier 2)
+      (mkCarrier 3)
+      sameOutput
+  have differentInputs :
+      mkCarrier 2 ≠ mkCarrier 3 := by
+    decide
+  exact differentInputs equalInputs
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw (alienLaw (x) (y)) (alienLaw (x) (z))) (alienLaw (alienLaw (y) (w)) (alienLaw (y) (z))) =
+      alienLaw (alienLaw (alienLaw (x) (z)) (alienLaw (x) (y))) (alienLaw (alienLaw (y) (z)) (alienLaw (y) (w))) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⪿"
+  canonicalCode := discoveredIdentityCode
+  displayText := "(((x \u29e9 y) \u29e9 (x \u29e9 z)) \u29e9 ((y \u29e9 w) \u29e9 (y \u29e9 z))) = (((x \u29e9 z) \u29e9 (x \u29e9 y)) \u29e9 ((y \u29e9 z) \u29e9 (y \u29e9 w)))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 68
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "⌫"
+  operationGlyph := "⧩"
+  symmetryGlyph := "🚢"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["left_alternative", "right_alternative", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "478dfe0cd8fb2fcd1a2fae314e098f182470de77aea2dbbc128a3eabcaf4ab56"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+========================================================================================================
+CYCLE 007/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_007
+
+========================================================================================================
+CYCLE 008/100 — ATTEMPT 1/5 — SEED 2033
+========================================================================================================
+Unicode: 𝇍 ≔ ☏ ⤇
+Glyph metadata:
+  structure  𝇍 U+1D1CD MUSICAL SYMBOL TEMPUS IMPERFECTUM CUM PROLATIONE IMPERFECTA DIMINUTION-2 [So]
+  operation  ≔ U+2254 COLON EQUALS [Sm]
+  symmetry   ☏ U+260F WHITE TELEPHONE [So]
+  identity   ⤇ U+2907 RIGHTWARDS DOUBLE ARROW FROM BAR [Sm]
+Operation table:
+  0 2 1 3
+  2 1 0 3
+  1 0 2 2
+  0 1 2 3
+Positive laws: idempotent, flexible, surjective
+Discovered identity: ((x ≔ (w ≔ x)) ≔ ((z ≔ x) ≔ (y ≔ x))) = (((w ≔ x) ≔ (y ≔ x)) ≔ ((x ≔ z) ≔ x))
+Comparison failures: 427/480
+Countermodel: reference:left_projection
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    22962 lines=  661 sha256=3d3da53f1aa734f62b357457b4a4011a83c741c79b721312db96068037b4901b
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5271 lines=  155 sha256=292e5ce466edfc508bbd73c2521fd244c4b1c73b35d980247fcf60af3adf7c7d
+novel_structure.json           bytes=     6845 lines=  270 sha256=bb84a76edaae952947b1bce162e0b50ba536022ef4a4ceaec27ee74981f66c30
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=     1001 lines=   52 sha256=a0b523858ebd3e5535e84cf2807aac625ca074928a72cc3d1605a35b1c241c31
+cycle_unicode.json             bytes=      562 lines=   26 sha256=7e1172869198fe053dfa1f281dfe6e346f5ce89fa0a10283bbf5153f018e494b
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[0, 2, 1, 3], [2, 1, 0, 3], [1, 0, 2, 2], [0, 1, 2, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw x (alienLaw w x)) (alienLaw (alienLaw z x) (alienLaw y x)) =
+    alienLaw (alienLaw (alienLaw w x) (alienLaw y x)) (alienLaw (alienLaw x z) x)
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 1) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 1) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 0) (mkCarrier 1))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (3.6s)
+info: HXCNovel.lean:640:0: [[0, 2, 1, 3], [2, 1, 0, 3], [1, 0, 2, 2], [0, 1, 2, 3]]
+info: HXCNovel.lean:641:0: [1, 0, 2, 3]
+info: HXCNovel.lean:643:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:644:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:645:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:646:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:647:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:648:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:649:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:650:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:651:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:652:0: HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw x (alienLaw w x)) (alienLaw (alienLaw z x) (alienLaw y x)) =
+    alienLaw (alienLaw (alienLaw w x) (alienLaw y x)) (alienLaw (alienLaw x z) x)
+info: HXCNovel.lean:653:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 1) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0))
+info: HXCNovel.lean:654:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:655:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:656:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:657:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 1) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 0) (mkCarrier 1))
+info: HXCNovel.lean:658:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:659:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 008 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  𝇍  U+1D1CD  MUSICAL SYMBOL TEMPUS IMPERFECTUM CUM PROLATIONE IMPERFECTA DIMINUTION-2  [So]
+OPERATION  ≔  U+2254  COLON EQUALS  [Sm]
+SYMMETRY   ☏  U+260F  WHITE TELEPHONE  [So]
+IDENTITY   ⤇  U+2907  RIGHTWARDS DOUBLE ARROW FROM BAR  [Sm]
+
+OPERATION TABLE
+  0 2 1 3
+  2 1 0 3
+  1 0 2 2
+  0 1 2 3
+
+POSITIVE LAWS
+  idempotent, flexible, surjective
+
+DISCOVERED IDENTITY
+  ((x ≔ (w ≔ x)) ≔ ((z ≔ x) ≔ (y ≔ x))) = (((w ≔ x) ≔ (y ≔ x)) ≔ ((x ≔ z) ≔ x))
+  comparison failures: 427/480
+  countermodel: reference:left_projection
+  assignment: {'x': 0, 'y': 0, 'z': 0, 'w': 1}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 1)
+      (mkCarrier 3)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 1) (mkCarrier 3)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 1))
+        (alienLaw (mkCarrier 0) (mkCarrier 3)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 1)
+      (mkCarrier 3)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 1))
+        (mkCarrier 3) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 3))
+        (alienLaw (mkCarrier 1) (mkCarrier 3)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 2) (mkCarrier 2) =
+      alienLaw (mkCarrier 2) (mkCarrier 3) := by
+    decide
+  have equalInputs :
+      mkCarrier 2 = mkCarrier 3 :=
+    h.1.1
+      (mkCarrier 2)
+      (mkCarrier 2)
+      (mkCarrier 3)
+      sameOutput
+  have differentInputs :
+      mkCarrier 2 ≠ mkCarrier 3 := by
+    decide
+  exact differentInputs equalInputs
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw (x) (alienLaw (w) (x))) (alienLaw (alienLaw (z) (x)) (alienLaw (y) (x))) =
+      alienLaw (alienLaw (alienLaw (w) (x)) (alienLaw (y) (x))) (alienLaw (alienLaw (x) (z)) (x)) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 1) (mkCarrier 0))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0)) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⤇"
+  canonicalCode := discoveredIdentityCode
+  displayText := "((x \u2254 (w \u2254 x)) \u2254 ((z \u2254 x) \u2254 (y \u2254 x))) = (((w \u2254 x) \u2254 (y \u2254 x)) \u2254 ((x \u2254 z) \u2254 x))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 53
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "𝇍"
+  operationGlyph := "≔"
+  symmetryGlyph := "☏"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["idempotent", "flexible", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "81b45ebec9c20e2bf332f17bc294e5216f853006cdbf99b1bf09a64597ea508a"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+========================================================================================================
+CYCLE 008/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_008
