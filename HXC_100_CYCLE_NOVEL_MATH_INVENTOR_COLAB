@@ -1,0 +1,5166 @@
+#!/usr/bin/env python3
+"""HXC 100-Cycle Novel Structure + Theorem Inventor — one-cell Colab runner.
+
+Paste this entire script into one Google Colab cell, or upload it and run:
+
+    %run /content/HXC_NOVEL_STRUCTURE_INVENTOR_COLAB.py
+
+This system runs the complete HXC discovery pipeline repeatedly. Each cycle
+constructs a non-degenerate finite operation, rejects known catalogues and
+earlier cycle discoveries, synthesises a non-seeded identity, finds an
+independent countermodel, assigns fresh Unicode glyphs, emits Lean 4 proofs,
+and optionally verifies the cycle with the Lean kernel.
+
+Novelty is certified relative to:
+  * the explicit reference library;
+  * all isomorphism classes encountered in the current search;
+  * the selected law fingerprint among surviving candidates.
+
+That is a rigorous finite novelty claim, not a claim that the structure has
+never appeared anywhere in the mathematical literature.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import asdict, dataclass
+from itertools import permutations, product
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import random
+import re
+import shutil
+import subprocess
+import sys
+import unicodedata
+
+TOOLCHAIN = os.environ.get(
+    "HXC_LEAN_TOOLCHAIN",
+    "leanprover/lean4:v4.33.0-rc1",
+)
+ORDER = int(os.environ.get("HXC_ORDER", "4"))
+SEED = int(os.environ.get("HXC_SEED", "2026"))
+BASE_SEED = SEED
+SAMPLES = int(os.environ.get("HXC_SAMPLES", "25000"))
+CYCLES = int(os.environ.get("HXC_CYCLES", "100"))
+RUN_ROOT = Path(
+    os.environ.get(
+        "HXC_OUTPUT_ROOT",
+        "/content/HXC100CycleNovelMath",
+    )
+)
+# ROOT is deliberately mutable. Every cycle points it at its own Lake project.
+ROOT = RUN_ROOT
+GENERATE_ONLY = os.environ.get("HXC_GENERATE_ONLY", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+if not 3 <= ORDER <= 5:
+    raise ValueError("HXC_ORDER must be 3, 4, or 5.")
+if SAMPLES < 1000:
+    raise ValueError("HXC_SAMPLES must be at least 1000.")
+
+MIN_NORMALISED_ENTROPY = float(
+    os.environ.get("HXC_MIN_NORMALISED_ENTROPY", "0.90")
+)
+MIN_PROJECTION_DISTANCE = float(
+    os.environ.get("HXC_MIN_PROJECTION_DISTANCE", "0.40")
+)
+MIN_REFERENCE_DISTANCE = float(
+    os.environ.get("HXC_MIN_REFERENCE_DISTANCE", "0.30")
+)
+MIN_AVERAGE_SUPPORT = float(
+    os.environ.get("HXC_MIN_AVERAGE_SUPPORT", "0.70")
+)
+CATALOGUE_CACHE = Path(
+    os.environ.get(
+        "HXC_CATALOGUE_CACHE",
+        "/content/.cache/hxc_catalogues",
+    )
+)
+CATALOGUE_VERSION = 3
+COMPLETE_CATALOGUE_MAX_ORDER = 4
+
+IDENTITY_TERM_BUDGET = int(
+    os.environ.get("HXC_IDENTITY_TERM_BUDGET", "7000")
+)
+IDENTITY_MODEL_LIMIT = int(
+    os.environ.get("HXC_IDENTITY_MODEL_LIMIT", "480")
+)
+IDENTITY_PAIR_LIMIT = int(
+    os.environ.get("HXC_IDENTITY_PAIR_LIMIT", "240")
+)
+IDENTITY_VARIABLES = ("x", "y", "z", "w")
+
+if IDENTITY_TERM_BUDGET < 1000:
+    raise ValueError("HXC_IDENTITY_TERM_BUDGET must be at least 1000.")
+if IDENTITY_MODEL_LIMIT < 64:
+    raise ValueError("HXC_IDENTITY_MODEL_LIMIT must be at least 64.")
+if CYCLES < 1:
+    raise ValueError("HXC_CYCLES must be at least 1.")
+
+MAX_CYCLE_RETRIES = int(os.environ.get("HXC_MAX_CYCLE_RETRIES", "5"))
+RESUME_RUN = os.environ.get("HXC_RESUME", "1").lower() not in {
+    "0", "false", "no"
+}
+VERIFY_EACH_CYCLE = os.environ.get(
+    "HXC_VERIFY_EACH_CYCLE",
+    "1",
+).lower() not in {"0", "false", "no"}
+REQUIRE_ALL_CYCLES = os.environ.get(
+    "HXC_REQUIRE_ALL_CYCLES",
+    "1",
+).lower() not in {"0", "false", "no"}
+PRINT_PROOFS = os.environ.get("HXC_PRINT_PROOFS", "1").lower() not in {
+    "0", "false", "no"
+}
+PRINT_FULL_LEAN = os.environ.get("HXC_PRINT_FULL_LEAN", "0").lower() in {
+    "1", "true", "yes"
+}
+PACKAGE_RESULTS = os.environ.get("HXC_PACKAGE_RESULTS", "1").lower() not in {
+    "0", "false", "no"
+}
+CYCLE_SEED_STRIDE = int(
+    os.environ.get("HXC_CYCLE_SEED_STRIDE", "1000003")
+)
+
+UNICODE_SYMBOL_CATEGORIES = frozenset({"Sm", "So", "Sk", "Sc"})
+RESERVED_GLYPHS = frozenset(
+    {
+        "+", "-", "*", "/", "=", "<", ">",
+        "⟁", "⟜", "⌬", "⧉", "⧖", "⥁", "⟡", "⫷", "⫸",
+        "⍉", "⋇", "⫯", "ꙮ", "⨳", "҂",
+    }
+)
+BANNED_UNICODE_NAME_PARTS = (
+    "COMBINING",
+    "VARIATION SELECTOR",
+    "ZERO WIDTH",
+    "JOINER",
+    "DIRECTIONAL",
+    "INVISIBLE",
+    "CONTROL",
+    "SURROGATE",
+    "PRIVATE USE",
+    "REPLACEMENT CHARACTER",
+    "TAG ",
+    "CANCEL TAG",
+    "MODIFIER FITZPATRICK",
+)
+BANNED_BIDI_CLASSES = frozenset(
+    {"RLO", "LRO", "RLE", "LRE", "PDF", "BN", "FSI", "LRI", "RLI", "PDI"}
+)
+
+LAW_KEYS = (
+    "commutative",
+    "associative",
+    "idempotent",
+    "flexible",
+    "left_alternative",
+    "right_alternative",
+    "medial",
+    "left_self_distributive",
+    "right_self_distributive",
+    "latin",
+    "surjective",
+)
+
+INTERESTING_LAWS = (
+    "idempotent",
+    "flexible",
+    "left_alternative",
+    "right_alternative",
+    "medial",
+    "left_self_distributive",
+    "right_self_distributive",
+    "latin",
+)
+
+
+@dataclass(frozen=True)
+class UnicodeGlyph:
+    symbol: str
+    codepoint: str
+    name: str
+    category: str
+
+
+@dataclass(frozen=True)
+class Term:
+    kind: str
+    variable: str | None = None
+    left: "Term | None" = None
+    right: "Term | None" = None
+    depth: int = 0
+    size: int = 1
+
+
+@dataclass(frozen=True)
+class IdentityDiscovery:
+    lhs: Term
+    rhs: Term
+    canonical_code: str
+    display: str
+    lean_lhs: str
+    lean_rhs: str
+    variables: tuple[str, ...]
+    target_term_count: int
+    candidate_pair_count: int
+    model_bank_satisfied: int
+    model_bank_total: int
+    model_bank_failure_rate: float
+    countermodel_table: tuple[tuple[int, ...], ...]
+    countermodel_source: str
+    counterexample_assignment: tuple[int, int, int, int]
+    score: float
+    historical_novelty_verified: bool = False
+
+
+@dataclass(frozen=True)
+class StructureCandidate:
+    table: tuple[tuple[int, ...], ...]
+    canonical: tuple[int, ...]
+    properties: dict[str, object]
+    classifications: tuple[str, ...]
+    metrics: dict[str, object]
+    fingerprint: tuple[object, ...]
+    entropy: float
+    interesting_law_count: int
+    sample_index: int
+    score: float = 0.0
+    exploration_fingerprint_frequency: int = 0
+    catalogue_memberships: tuple[str, ...] = ()
+    novelty_label: str = "historical_novelty_unverified"
+
+
+def banner(text: str) -> None:
+    print("\n" + "=" * 104, flush=True)
+    print(text, flush=True)
+    print("=" * 104, flush=True)
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    accepted_failure_text: tuple[str, ...] = (),
+) -> str:
+    banner("$ " + " ".join(command))
+    completed = subprocess.run(
+        command,
+        cwd=None if cwd is None else str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    output = completed.stdout or ""
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
+
+    if completed.returncode != 0:
+        lowered = output.lower()
+        accepted = any(marker.lower() in lowered for marker in accepted_failure_text)
+        if not accepted:
+            raise RuntimeError(
+                f"Command failed with exit code {completed.returncode}: "
+                + " ".join(command)
+            )
+        print("Recognised harmless idempotent result; continuing.", flush=True)
+
+    return output
+
+
+# ---------------------------------------------------------------------------
+# Unicode glyph registry
+# ---------------------------------------------------------------------------
+
+def usable_unicode_symbol(character: str) -> bool:
+    if len(character) != 1:
+        return False
+    if not character.isprintable() or character.isspace():
+        return False
+    if character in {'"', "'", "`", "\\"}:
+        return False
+    if unicodedata.combining(character) != 0:
+        return False
+
+    category = unicodedata.category(character)
+    if category not in UNICODE_SYMBOL_CATEGORIES:
+        return False
+    if unicodedata.bidirectional(character) in BANNED_BIDI_CLASSES:
+        return False
+
+    try:
+        name = unicodedata.name(character)
+    except ValueError:
+        return False
+
+    if any(part in name.upper() for part in BANNED_UNICODE_NAME_PARTS):
+        return False
+
+    try:
+        character.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        return False
+
+    return True
+
+
+def build_unicode_glyph_pool() -> list[UnicodeGlyph]:
+    pool: list[UnicodeGlyph] = []
+    for codepoint in range(sys.maxunicode + 1):
+        symbol = chr(codepoint)
+        if not usable_unicode_symbol(symbol):
+            continue
+        pool.append(
+            UnicodeGlyph(
+                symbol=symbol,
+                codepoint=f"U+{codepoint:04X}",
+                name=unicodedata.name(symbol),
+                category=unicodedata.category(symbol),
+            )
+        )
+    return pool
+
+
+def select_fresh_glyph(
+    pool: list[UnicodeGlyph],
+    rng: random.Random,
+    used: set[str],
+    category_order: tuple[str, ...],
+) -> UnicodeGlyph:
+    for category in category_order:
+        options = [
+            glyph
+            for glyph in pool
+            if glyph.category == category
+            and glyph.symbol not in used
+            and glyph.symbol not in RESERVED_GLYPHS
+        ]
+        if options:
+            selected = rng.choice(options)
+            used.add(selected.symbol)
+            return selected
+    raise RuntimeError("Filtered Unicode glyph registry exhausted.")
+
+
+# ---------------------------------------------------------------------------
+# Symbolic identity invention
+# ---------------------------------------------------------------------------
+
+def variable_term(name: str) -> Term:
+    return Term(kind="var", variable=name)
+
+
+def operation_term(left: Term, right: Term) -> Term:
+    return Term(
+        kind="op",
+        left=left,
+        right=right,
+        depth=1 + max(left.depth, right.depth),
+        size=1 + left.size + right.size,
+    )
+
+
+def term_code(term: Term) -> str:
+    if term.kind == "var":
+        assert term.variable is not None
+        return term.variable
+
+    assert term.left is not None and term.right is not None
+    return f"⋆({term_code(term.left)},{term_code(term.right)})"
+
+
+def term_display(term: Term, glyph: str) -> str:
+    if term.kind == "var":
+        assert term.variable is not None
+        return term.variable
+
+    assert term.left is not None and term.right is not None
+    return (
+        f"({term_display(term.left, glyph)} "
+        f"{glyph} {term_display(term.right, glyph)})"
+    )
+
+
+def term_lean(
+    term: Term,
+    *,
+    law_name: str,
+    variable_map: dict[str, str] | None = None,
+) -> str:
+    if term.kind == "var":
+        assert term.variable is not None
+        if variable_map is None:
+            return term.variable
+        return variable_map[term.variable]
+
+    assert term.left is not None and term.right is not None
+    return (
+        f"{law_name} "
+        f"({term_lean(term.left, law_name=law_name, variable_map=variable_map)}) "
+        f"({term_lean(term.right, law_name=law_name, variable_map=variable_map)})"
+    )
+
+
+def term_variables(term: Term) -> frozenset[str]:
+    if term.kind == "var":
+        assert term.variable is not None
+        return frozenset({term.variable})
+
+    assert term.left is not None and term.right is not None
+    return term_variables(term.left) | term_variables(term.right)
+
+
+def rename_term(term: Term, mapping: dict[str, str]) -> Term:
+    if term.kind == "var":
+        assert term.variable is not None
+        return variable_term(mapping[term.variable])
+
+    assert term.left is not None and term.right is not None
+    return operation_term(
+        rename_term(term.left, mapping),
+        rename_term(term.right, mapping),
+    )
+
+
+def canonical_identity_code(lhs: Term, rhs: Term) -> str:
+    candidates: list[str] = []
+
+    for renamed_variables in permutations(IDENTITY_VARIABLES):
+        mapping = dict(zip(IDENTITY_VARIABLES, renamed_variables, strict=True))
+        renamed_lhs = term_code(rename_term(lhs, mapping))
+        renamed_rhs = term_code(rename_term(rhs, mapping))
+        left_code, right_code = sorted((renamed_lhs, renamed_rhs))
+        candidates.append(f"{left_code}={right_code}")
+
+    return min(candidates)
+
+
+def seed_identity_codes() -> set[str]:
+    x, y, z, w = (variable_term(name) for name in IDENTITY_VARIABLES)
+    op = operation_term
+
+    seed_pairs = (
+        (op(x, y), op(y, x)),
+        (op(op(x, y), z), op(x, op(y, z))),
+        (op(x, x), x),
+        (op(x, op(y, x)), op(op(x, y), x)),
+        (op(x, op(x, y)), op(op(x, x), y)),
+        (op(op(x, y), y), op(x, op(y, y))),
+        (
+            op(op(x, y), op(z, w)),
+            op(op(x, z), op(y, w)),
+        ),
+        (
+            op(x, op(y, z)),
+            op(op(x, y), op(x, z)),
+        ),
+        (
+            op(op(x, y), z),
+            op(op(x, z), op(y, z)),
+        ),
+    )
+
+    return {
+        canonical_identity_code(lhs, rhs)
+        for lhs, rhs in seed_pairs
+    }
+
+
+def generate_identity_terms(rng: random.Random) -> list[Term]:
+    variables = [variable_term(name) for name in IDENTITY_VARIABLES]
+    depth_one = [
+        operation_term(left, right)
+        for left in variables
+        for right in variables
+    ]
+
+    depth_at_most_one = variables + depth_one
+    depth_two = [
+        operation_term(left, right)
+        for left in depth_at_most_one
+        for right in depth_at_most_one
+        if max(left.depth, right.depth) == 1
+    ]
+
+    terms_by_code = {
+        term_code(term): term
+        for term in variables + depth_one + depth_two
+    }
+    depth_at_most_two = list(terms_by_code.values())
+
+    while len(terms_by_code) < IDENTITY_TERM_BUDGET:
+        left = rng.choice(depth_at_most_two)
+        right = rng.choice(depth_at_most_two)
+        if max(left.depth, right.depth) != 2:
+            continue
+
+        term = operation_term(left, right)
+        terms_by_code.setdefault(term_code(term), term)
+
+    return sorted(
+        terms_by_code.values(),
+        key=lambda term: (term.depth, term.size, term_code(term)),
+    )
+
+
+def identity_assignments() -> tuple[tuple[int, int, int, int], ...]:
+    return tuple(product(range(ORDER), repeat=len(IDENTITY_VARIABLES)))
+
+
+def term_vector(
+    term: Term,
+    table: tuple[tuple[int, ...], ...],
+    assignments: tuple[tuple[int, int, int, int], ...],
+    memo: dict[Term, tuple[int, ...]],
+) -> tuple[int, ...]:
+    cached = memo.get(term)
+    if cached is not None:
+        return cached
+
+    if term.kind == "var":
+        assert term.variable is not None
+        index = IDENTITY_VARIABLES.index(term.variable)
+        result = tuple(assignment[index] for assignment in assignments)
+    else:
+        assert term.left is not None and term.right is not None
+        left_vector = term_vector(term.left, table, assignments, memo)
+        right_vector = term_vector(term.right, table, assignments, memo)
+        result = tuple(
+            table[left_value][right_value]
+            for left_value, right_value in zip(
+                left_vector,
+                right_vector,
+                strict=True,
+            )
+        )
+
+    memo[term] = result
+    return result
+
+
+def identity_model_bank(
+    catalogues: dict[str, set[tuple[int, ...]]],
+    rng: random.Random,
+    target_table: tuple[tuple[int, ...], ...],
+) -> list[tuple[str, tuple[tuple[int, ...], ...]]]:
+    bank: list[tuple[str, tuple[tuple[int, ...], ...]]] = []
+    seen: set[tuple[int, ...]] = {flatten_table(target_table)}
+
+    def add(source: str, table: tuple[tuple[int, ...], ...]) -> None:
+        flattened = flatten_table(table)
+        if flattened in seen:
+            return
+        seen.add(flattened)
+        bank.append((source, table))
+
+    for name, table in reference_library().items():
+        add(f"reference:{name}", table)
+
+    catalogue_names = sorted(catalogues)
+    per_catalogue = max(
+        8,
+        IDENTITY_MODEL_LIMIT // max(1, len(catalogue_names) + 2),
+    )
+
+    for name in catalogue_names:
+        entries = sorted(catalogues[name])
+        if len(entries) <= per_catalogue:
+            selected_entries = entries
+        else:
+            step = len(entries) / per_catalogue
+            selected_entries = [
+                entries[min(int(index * step), len(entries) - 1)]
+                for index in range(per_catalogue)
+            ]
+
+        for entry in selected_entries:
+            add(f"catalogue:{name}", unflatten_table(entry))
+
+    automorphism = symmetry_permutation()
+    while len(bank) < IDENTITY_MODEL_LIMIT:
+        add(
+            "random_equivariant_holdout",
+            generate_equivariant_table(rng, automorphism),
+        )
+
+    return bank[:IDENTITY_MODEL_LIMIT]
+
+
+def discover_symbolic_identity(
+    candidate: StructureCandidate,
+    catalogues: dict[str, set[tuple[int, ...]]],
+    rng: random.Random,
+    operation_glyph: UnicodeGlyph,
+    excluded_identity_codes: set[str] | None = None,
+) -> IdentityDiscovery:
+    excluded_identity_codes = excluded_identity_codes or set()
+    terms = generate_identity_terms(rng)
+    assignments = identity_assignments()
+    target_memo: dict[Term, tuple[int, ...]] = {}
+    semantic_groups: dict[tuple[int, ...], list[Term]] = {}
+
+    for term in terms:
+        vector = term_vector(
+            term,
+            candidate.table,
+            assignments,
+            target_memo,
+        )
+        semantic_groups.setdefault(vector, []).append(term)
+
+    seeded = seed_identity_codes()
+    proposed: dict[str, tuple[Term, Term]] = {}
+
+    for group in semantic_groups.values():
+        if len(group) < 2:
+            continue
+
+        shortest = sorted(
+            group,
+            key=lambda term: (term.size, term.depth, term_code(term)),
+        )[:12]
+
+        for left_index in range(len(shortest)):
+            for right_index in range(left_index + 1, len(shortest)):
+                lhs = shortest[left_index]
+                rhs = shortest[right_index]
+                variables = term_variables(lhs) | term_variables(rhs)
+
+                if len(variables) < 3:
+                    continue
+                if lhs.kind != "op" or rhs.kind != "op":
+                    continue
+                if max(lhs.depth, rhs.depth) < 3:
+                    continue
+                if min(lhs.size, rhs.size) < 5:
+                    continue
+                if lhs.size + rhs.size > 34:
+                    continue
+
+                code = canonical_identity_code(lhs, rhs)
+                if (
+                    code in seeded
+                    or code in proposed
+                    or code in excluded_identity_codes
+                ):
+                    continue
+
+                proposed[code] = (lhs, rhs)
+
+    if not proposed:
+        raise RuntimeError(
+            "No non-seeded symbolic identity was discovered. "
+            "Increase HXC_IDENTITY_TERM_BUDGET."
+        )
+
+    preliminary = sorted(
+        proposed.items(),
+        key=lambda item: (
+            -len(term_variables(item[1][0]) | term_variables(item[1][1])),
+            item[1][0].size + item[1][1].size,
+            abs(item[1][0].size - item[1][1].size),
+            item[0],
+        ),
+    )[:IDENTITY_PAIR_LIMIT]
+
+    model_bank = identity_model_bank(
+        catalogues,
+        rng,
+        candidate.table,
+    )
+
+    participating_terms = {
+        term
+        for _, (lhs, rhs) in preliminary
+        for term in (lhs, rhs)
+    }
+
+    satisfaction_counts = [0 for _ in preliminary]
+    first_countermodel: list[
+        tuple[
+            str,
+            tuple[tuple[int, ...], ...],
+            tuple[int, int, int, int],
+        ] | None
+    ] = [None for _ in preliminary]
+
+    for source, table in model_bank:
+        memo: dict[Term, tuple[int, ...]] = {}
+        vectors = {
+            term: term_vector(term, table, assignments, memo)
+            for term in participating_terms
+        }
+
+        for index, (_, (lhs, rhs)) in enumerate(preliminary):
+            left_vector = vectors[lhs]
+            right_vector = vectors[rhs]
+
+            if left_vector == right_vector:
+                satisfaction_counts[index] += 1
+                continue
+
+            if first_countermodel[index] is None:
+                witness_index = next(
+                    position
+                    for position, (left_value, right_value) in enumerate(
+                        zip(left_vector, right_vector, strict=True)
+                    )
+                    if left_value != right_value
+                )
+                first_countermodel[index] = (
+                    source,
+                    table,
+                    assignments[witness_index],
+                )
+
+    discoveries: list[IdentityDiscovery] = []
+
+    for index, (code, (lhs, rhs)) in enumerate(preliminary):
+        countermodel = first_countermodel[index]
+        if countermodel is None:
+            continue
+
+        source, countermodel_table, witness = countermodel
+        satisfied = satisfaction_counts[index]
+        total = len(model_bank)
+        failure_rate = 1.0 - (satisfied / total)
+        variables = tuple(
+            name
+            for name in IDENTITY_VARIABLES
+            if name in (term_variables(lhs) | term_variables(rhs))
+        )
+
+        complexity = lhs.size + rhs.size
+        balance = abs(lhs.size - rhs.size)
+        score = (
+            18.0 * failure_rate
+            + 2.5 * len(variables)
+            + 0.35 * min(complexity, 30)
+            - 0.25 * balance
+        )
+
+        discoveries.append(
+            IdentityDiscovery(
+                lhs=lhs,
+                rhs=rhs,
+                canonical_code=code,
+                display=(
+                    f"{term_display(lhs, operation_glyph.symbol)} = "
+                    f"{term_display(rhs, operation_glyph.symbol)}"
+                ),
+                lean_lhs=term_lean(lhs, law_name="alienLaw"),
+                lean_rhs=term_lean(rhs, law_name="alienLaw"),
+                variables=variables,
+                target_term_count=len(terms),
+                candidate_pair_count=len(proposed),
+                model_bank_satisfied=satisfied,
+                model_bank_total=total,
+                model_bank_failure_rate=failure_rate,
+                countermodel_table=countermodel_table,
+                countermodel_source=source,
+                counterexample_assignment=witness,
+                score=score,
+            )
+        )
+
+    if not discoveries:
+        raise RuntimeError(
+            "Every discovered identity also held throughout the comparison "
+            "bank. Increase the model bank or term budget."
+        )
+
+    return max(
+        discoveries,
+        key=lambda discovery: (
+            discovery.score,
+            discovery.model_bank_failure_rate,
+            len(discovery.variables),
+            -(discovery.lhs.size + discovery.rhs.size),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Finite operation tables and isomorphism
+# ---------------------------------------------------------------------------
+
+def operation_from_formula(function) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(function(x, y) % ORDER for y in range(ORDER))
+        for x in range(ORDER)
+    )
+
+
+def reference_library() -> dict[str, tuple[tuple[int, ...], ...]]:
+    references = {
+        "left_projection": operation_from_formula(lambda x, y: x),
+        "right_projection": operation_from_formula(lambda x, y: y),
+        "constant_zero": operation_from_formula(lambda x, y: 0),
+        "modular_addition": operation_from_formula(lambda x, y: x + y),
+        "modular_multiplication": operation_from_formula(lambda x, y: x * y),
+        "modular_subtraction": operation_from_formula(
+            lambda x, y: x + ORDER - y
+        ),
+        "minimum": operation_from_formula(min),
+        "maximum": operation_from_formula(max),
+    }
+    if ORDER & (ORDER - 1) == 0:
+        references["bitwise_xor"] = operation_from_formula(lambda x, y: x ^ y)
+    return references
+
+
+PERMUTATIONS = tuple(permutations(range(ORDER)))
+
+
+def relabel_table(
+    table: tuple[tuple[int, ...], ...],
+    permutation: tuple[int, ...],
+) -> tuple[tuple[int, ...], ...]:
+    inverse = [0] * ORDER
+    for old, new in enumerate(permutation):
+        inverse[new] = old
+
+    return tuple(
+        tuple(
+            permutation[
+                table[inverse[new_x]][inverse[new_y]]
+            ]
+            for new_y in range(ORDER)
+        )
+        for new_x in range(ORDER)
+    )
+
+
+def canonical_form(
+    table: tuple[tuple[int, ...], ...],
+) -> tuple[int, ...]:
+    return min(
+        tuple(value for row in relabel_table(table, permutation) for value in row)
+        for permutation in PERMUTATIONS
+    )
+
+
+
+def flatten_table(
+    table: tuple[tuple[int, ...], ...],
+) -> tuple[int, ...]:
+    return tuple(value for row in table for value in row)
+
+
+def unflatten_table(
+    values: tuple[int, ...] | list[int],
+) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(values[row * ORDER + column] for column in range(ORDER))
+        for row in range(ORDER)
+    )
+
+
+def transpose_table(
+    table: tuple[tuple[int, ...], ...],
+) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(table[column][row] for column in range(ORDER))
+        for row in range(ORDER)
+    )
+
+
+def _iter_domain_bits(bits: int):
+    while bits:
+        lowest = bits & -bits
+        yield lowest.bit_length() - 1
+        bits -= lowest
+
+
+def _singleton_domain_value(bits: int) -> int | None:
+    if bits and bits & (bits - 1) == 0:
+        return bits.bit_length() - 1
+    return None
+
+
+def enumerate_right_shelves_complete() -> list[tuple[tuple[int, ...], ...]]:
+    """Enumerate every labelled right shelf for ORDER <= 4.
+
+    Writing R_y(x) = x*y, right self-distributivity becomes
+
+        R_z ∘ R_y = R_{R_z(y)} ∘ R_z.
+
+    The enumerator treats the columns as unary maps and applies finite-domain
+    propagation before branching. At order 4 it returns 14,067 labelled
+    shelves, which collapse to 720 isomorphism classes.
+    """
+
+    if ORDER > COMPLETE_CATALOGUE_MAX_ORDER:
+        raise RuntimeError(
+            "Complete shelf enumeration is supported only through order 4."
+        )
+
+    from itertools import product as cartesian_product
+
+    functions = list(cartesian_product(range(ORDER), repeat=ORDER))
+    function_index = {
+        function: index
+        for index, function in enumerate(functions)
+    }
+    function_count = len(functions)
+
+    composition = [
+        [0 for _ in range(function_count)]
+        for _ in range(function_count)
+    ]
+    for outer_index, outer in enumerate(functions):
+        for inner_index, inner in enumerate(functions):
+            composition[outer_index][inner_index] = function_index[
+                tuple(outer[inner[x]] for x in range(ORDER))
+            ]
+
+    supports_right = [
+        [0 for _ in range(function_count)]
+        for _ in range(function_count)
+    ]
+    supports_left = [
+        [0 for _ in range(function_count)]
+        for _ in range(function_count)
+    ]
+
+    for z_function in range(function_count):
+        right_groups: dict[int, int] = {}
+        left_groups: dict[int, int] = {}
+
+        for candidate_k in range(function_count):
+            result = composition[candidate_k][z_function]
+            right_groups[result] = (
+                right_groups.get(result, 0) | (1 << candidate_k)
+            )
+
+        for candidate_y in range(function_count):
+            result = composition[z_function][candidate_y]
+            left_groups[result] = (
+                left_groups.get(result, 0) | (1 << candidate_y)
+            )
+
+        for candidate_y in range(function_count):
+            supports_right[z_function][candidate_y] = right_groups.get(
+                composition[z_function][candidate_y],
+                0,
+            )
+
+        for candidate_k in range(function_count):
+            supports_left[z_function][candidate_k] = left_groups.get(
+                composition[candidate_k][z_function],
+                0,
+            )
+
+    full_domain = (1 << function_count) - 1
+    solutions: list[tuple[tuple[int, ...], ...]] = []
+
+    def propagate(domains: tuple[int, ...]) -> tuple[int, ...] | None:
+        current = list(domains)
+        changed = True
+
+        while changed:
+            changed = False
+
+            for z_index, z_domain in enumerate(current):
+                z_function = _singleton_domain_value(z_domain)
+                if z_function is None:
+                    continue
+
+                z_map = functions[z_function]
+
+                for y_index in range(ORDER):
+                    k_index = z_map[y_index]
+                    y_domain = current[y_index]
+                    k_domain = current[k_index]
+
+                    if y_index == k_index:
+                        filtered = 0
+                        for candidate in _iter_domain_bits(y_domain):
+                            if (
+                                supports_right[z_function][candidate]
+                                >> candidate
+                            ) & 1:
+                                filtered |= 1 << candidate
+
+                        if filtered == 0:
+                            return None
+                        if filtered != y_domain:
+                            current[y_index] = filtered
+                            changed = True
+                        continue
+
+                    filtered_y = 0
+                    for candidate_y in _iter_domain_bits(y_domain):
+                        if (
+                            supports_right[z_function][candidate_y]
+                            & k_domain
+                        ):
+                            filtered_y |= 1 << candidate_y
+
+                    if filtered_y == 0:
+                        return None
+
+                    filtered_k = 0
+                    for candidate_k in _iter_domain_bits(k_domain):
+                        if (
+                            supports_left[z_function][candidate_k]
+                            & filtered_y
+                        ):
+                            filtered_k |= 1 << candidate_k
+
+                    if filtered_k == 0:
+                        return None
+
+                    if filtered_y != y_domain:
+                        current[y_index] = filtered_y
+                        changed = True
+                    if filtered_k != k_domain:
+                        current[k_index] = filtered_k
+                        changed = True
+
+        return tuple(current)
+
+    def search(domains: tuple[int, ...]) -> None:
+        reduced = propagate(domains)
+        if reduced is None:
+            return
+
+        assigned = [
+            _singleton_domain_value(domain)
+            for domain in reduced
+        ]
+
+        if all(value is not None for value in assigned):
+            column_functions = [
+                functions[int(value)]
+                for value in assigned
+            ]
+            table = tuple(
+                tuple(
+                    column_functions[column][row]
+                    for column in range(ORDER)
+                )
+                for row in range(ORDER)
+            )
+            solutions.append(table)
+            return
+
+        branch_index = min(
+            (
+                index
+                for index, domain in enumerate(reduced)
+                if _singleton_domain_value(domain) is None
+            ),
+            key=lambda index: reduced[index].bit_count(),
+        )
+
+        for candidate in _iter_domain_bits(reduced[branch_index]):
+            branch = list(reduced)
+            branch[branch_index] = 1 << candidate
+            search(tuple(branch))
+
+    search(tuple(full_domain for _ in range(ORDER)))
+    return solutions
+
+
+def enumerate_quasigroups_complete() -> list[tuple[tuple[int, ...], ...]]:
+    """Enumerate every labelled quasigroup table for ORDER <= 4."""
+
+    if ORDER > COMPLETE_CATALOGUE_MAX_ORDER:
+        raise RuntimeError(
+            "Complete quasigroup enumeration is supported only through order 4."
+        )
+
+    row_permutations = tuple(permutations(range(ORDER)))
+    results: list[tuple[tuple[int, ...], ...]] = []
+
+    def search_rows(
+        selected: list[tuple[int, ...]],
+    ) -> None:
+        if len(selected) == ORDER:
+            results.append(tuple(selected))
+            return
+
+        for row in row_permutations:
+            if any(
+                row[column] in {
+                    existing[column]
+                    for existing in selected
+                }
+                for column in range(ORDER)
+            ):
+                continue
+            selected.append(row)
+            search_rows(selected)
+            selected.pop()
+
+    search_rows([])
+    return results
+
+
+def right_translations_bijective(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        len({table[x][y] for x in range(ORDER)}) == ORDER
+        for y in range(ORDER)
+    )
+
+
+def left_translations_bijective(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        len(set(table[x])) == ORDER
+        for x in range(ORDER)
+    )
+
+
+def right_involutory(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        table[table[x][y]][y] == x
+        for x in range(ORDER)
+        for y in range(ORDER)
+    )
+
+
+def left_involutory(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        table[x][table[x][y]] == y
+        for x in range(ORDER)
+        for y in range(ORDER)
+    )
+
+
+def catalogue_sha256(
+    catalogue: set[tuple[int, ...]],
+) -> str:
+    payload = json.dumps(
+        [list(entry) for entry in sorted(catalogue)],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def build_complete_catalogues() -> tuple[
+    dict[str, set[tuple[int, ...]]],
+    dict[str, object],
+]:
+    """Build or load complete order-3/4 shelf and quasigroup catalogues."""
+
+    reference_classes = {
+        canonical_form(table)
+        for table in reference_library().values()
+    }
+
+    if ORDER > COMPLETE_CATALOGUE_MAX_ORDER:
+        catalogues = {
+            "core_references": reference_classes,
+        }
+        metadata = {
+            "complete": False,
+            "order": ORDER,
+            "scope": (
+                "Core references only. Complete shelf/quasigroup catalogue "
+                "generation is limited to order <= 4."
+            ),
+            "counts": {
+                name: len(values)
+                for name, values in catalogues.items()
+            },
+            "hashes": {
+                name: catalogue_sha256(values)
+                for name, values in catalogues.items()
+            },
+        }
+        return catalogues, metadata
+
+    CATALOGUE_CACHE.mkdir(parents=True, exist_ok=True)
+    cache_path = CATALOGUE_CACHE / (
+        f"hxc_catalogues_v{CATALOGUE_VERSION}_order_{ORDER}.json"
+    )
+
+    if cache_path.exists():
+        document = json.loads(cache_path.read_text(encoding="utf-8"))
+        if (
+            document.get("version") == CATALOGUE_VERSION
+            and document.get("order") == ORDER
+        ):
+            catalogues = {
+                name: {
+                    tuple(int(value) for value in entry)
+                    for entry in entries
+                }
+                for name, entries in document["catalogues"].items()
+            }
+            return catalogues, document["metadata"]
+
+    labelled_right_shelves = enumerate_right_shelves_complete()
+
+    right_shelves: set[tuple[int, ...]] = set()
+    right_spindles: set[tuple[int, ...]] = set()
+    right_racks: set[tuple[int, ...]] = set()
+    right_quandles: set[tuple[int, ...]] = set()
+    right_kei: set[tuple[int, ...]] = set()
+
+    for table in labelled_right_shelves:
+        canonical = canonical_form(table)
+        right_shelves.add(canonical)
+
+        idempotent = all(
+            table[x][x] == x
+            for x in range(ORDER)
+        )
+        translations_bijective = right_translations_bijective(table)
+
+        if idempotent:
+            right_spindles.add(canonical)
+        if translations_bijective:
+            right_racks.add(canonical)
+        if idempotent and translations_bijective:
+            right_quandles.add(canonical)
+        if (
+            idempotent
+            and translations_bijective
+            and right_involutory(table)
+        ):
+            right_kei.add(canonical)
+
+    labelled_left_shelves = [
+        transpose_table(table)
+        for table in labelled_right_shelves
+    ]
+
+    left_shelves: set[tuple[int, ...]] = set()
+    left_spindles: set[tuple[int, ...]] = set()
+    left_racks: set[tuple[int, ...]] = set()
+    left_quandles: set[tuple[int, ...]] = set()
+    left_kei: set[tuple[int, ...]] = set()
+
+    for table in labelled_left_shelves:
+        canonical = canonical_form(table)
+        left_shelves.add(canonical)
+
+        idempotent = all(
+            table[x][x] == x
+            for x in range(ORDER)
+        )
+        translations_bijective = left_translations_bijective(table)
+
+        if idempotent:
+            left_spindles.add(canonical)
+        if translations_bijective:
+            left_racks.add(canonical)
+        if idempotent and translations_bijective:
+            left_quandles.add(canonical)
+        if (
+            idempotent
+            and translations_bijective
+            and left_involutory(table)
+        ):
+            left_kei.add(canonical)
+
+    quasigroups = {
+        canonical_form(table)
+        for table in enumerate_quasigroups_complete()
+    }
+
+    catalogues = {
+        "core_references": reference_classes,
+        "right_shelves": right_shelves,
+        "left_shelves": left_shelves,
+        "right_spindles": right_spindles,
+        "left_spindles": left_spindles,
+        "right_racks": right_racks,
+        "left_racks": left_racks,
+        "right_quandles": right_quandles,
+        "left_quandles": left_quandles,
+        "right_kei": right_kei,
+        "left_kei": left_kei,
+        "quasigroups": quasigroups,
+    }
+
+    metadata = {
+        "complete": True,
+        "order": ORDER,
+        "scope": (
+            "Complete up-to-isomorphism catalogues generated in this run for "
+            "left/right shelves, spindles, racks, quandles, kei and "
+            "quasigroups on the selected carrier order."
+        ),
+        "labelled_right_shelves": len(labelled_right_shelves),
+        "labelled_quasigroups": len(enumerate_quasigroups_complete()),
+        "counts": {
+            name: len(values)
+            for name, values in catalogues.items()
+        },
+        "hashes": {
+            name: catalogue_sha256(values)
+            for name, values in catalogues.items()
+        },
+    }
+
+    cache_document = {
+        "version": CATALOGUE_VERSION,
+        "order": ORDER,
+        "metadata": metadata,
+        "catalogues": {
+            name: [
+                list(entry)
+                for entry in sorted(values)
+            ]
+            for name, values in catalogues.items()
+        },
+    }
+    cache_path.write_text(
+        json.dumps(cache_document, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    return catalogues, metadata
+
+
+def symmetry_permutation() -> tuple[int, ...]:
+    # A nontrivial involution. It swaps 0 and 1 and fixes all other elements.
+    return tuple([1, 0] + list(range(2, ORDER)))
+
+
+def generate_equivariant_table(
+    rng: random.Random,
+    automorphism: tuple[int, ...],
+) -> tuple[tuple[int, ...], ...]:
+    """Generate an arbitrary table that is equivariant under an involution."""
+
+    table = [[-1 for _ in range(ORDER)] for _ in range(ORDER)]
+    fixed_outputs = [
+        value
+        for value in range(ORDER)
+        if automorphism[value] == value
+    ]
+
+    # ORDER=3 still has one fixed output; ORDER>=4 has at least two.
+    if not fixed_outputs:
+        raise RuntimeError("Chosen automorphism has no fixed outputs.")
+
+    for x in range(ORDER):
+        for y in range(ORDER):
+            if table[x][y] != -1:
+                continue
+
+            tx = automorphism[x]
+            ty = automorphism[y]
+
+            if (tx, ty) == (x, y):
+                value = rng.choice(fixed_outputs)
+                table[x][y] = value
+            else:
+                value = rng.randrange(ORDER)
+                table[x][y] = value
+                table[tx][ty] = automorphism[value]
+
+    return tuple(tuple(row) for row in table)
+
+
+# ---------------------------------------------------------------------------
+# Law discovery and falsification
+# ---------------------------------------------------------------------------
+
+def analyse_properties(
+    table: tuple[tuple[int, ...], ...],
+) -> dict[str, object]:
+    elements = range(ORDER)
+
+    left_bijective = left_translations_bijective(table)
+    right_bijective = right_translations_bijective(table)
+
+    properties: dict[str, object] = {
+        "commutative": all(
+            table[x][y] == table[y][x]
+            for x in elements
+            for y in elements
+        ),
+        "associative": all(
+            table[table[x][y]][z] == table[x][table[y][z]]
+            for x in elements
+            for y in elements
+            for z in elements
+        ),
+        "idempotent": all(
+            table[x][x] == x
+            for x in elements
+        ),
+        "flexible": all(
+            table[x][table[y][x]] == table[table[x][y]][x]
+            for x in elements
+            for y in elements
+        ),
+        "left_alternative": all(
+            table[x][table[x][y]] == table[table[x][x]][y]
+            for x in elements
+            for y in elements
+        ),
+        "right_alternative": all(
+            table[table[x][y]][y] == table[x][table[y][y]]
+            for x in elements
+            for y in elements
+        ),
+        "medial": all(
+            table[table[x][y]][table[z][w]]
+            == table[table[x][z]][table[y][w]]
+            for x in elements
+            for y in elements
+            for z in elements
+            for w in elements
+        ),
+        "left_self_distributive": all(
+            table[x][table[y][z]]
+            == table[table[x][y]][table[x][z]]
+            for x in elements
+            for y in elements
+            for z in elements
+        ),
+        "right_self_distributive": all(
+            table[table[x][y]][z]
+            == table[table[x][z]][table[y][z]]
+            for x in elements
+            for y in elements
+            for z in elements
+        ),
+        "latin": left_bijective and right_bijective,
+        "left_translation_bijective": left_bijective,
+        "right_translation_bijective": right_bijective,
+        "left_involutory": left_involutory(table),
+        "right_involutory": right_involutory(table),
+        "surjective": (
+            len(
+                {
+                    table[x][y]
+                    for x in elements
+                    for y in elements
+                }
+            )
+            == ORDER
+        ),
+    }
+
+    properties["left_identity"] = next(
+        (
+            identity
+            for identity in elements
+            if all(table[identity][x] == x for x in elements)
+        ),
+        None,
+    )
+    properties["right_identity"] = next(
+        (
+            identity
+            for identity in elements
+            if all(table[x][identity] == x for x in elements)
+        ),
+        None,
+    )
+
+    return properties
+
+
+def classify_structure(
+    properties: dict[str, object],
+) -> tuple[str, ...]:
+    classes = ["magma"]
+
+    associative = bool(properties["associative"])
+    commutative = bool(properties["commutative"])
+    idempotent = bool(properties["idempotent"])
+    left_sd = bool(properties["left_self_distributive"])
+    right_sd = bool(properties["right_self_distributive"])
+    latin = bool(properties["latin"])
+    left_identity = properties["left_identity"] is not None
+    right_identity = properties["right_identity"] is not None
+
+    if associative:
+        classes.append("semigroup")
+    if associative and idempotent:
+        classes.append("band")
+    if associative and commutative and idempotent:
+        classes.append("semilattice")
+
+    if left_sd:
+        classes.append("left_shelf")
+    if right_sd:
+        classes.append("right_shelf")
+    if left_sd and right_sd:
+        classes.append("bi_shelf")
+
+    if left_sd and idempotent:
+        classes.append("left_spindle")
+    if right_sd and idempotent:
+        classes.append("right_spindle")
+
+    if left_sd and bool(properties["left_translation_bijective"]):
+        classes.append("left_rack")
+    if right_sd and bool(properties["right_translation_bijective"]):
+        classes.append("right_rack")
+
+    if (
+        left_sd
+        and idempotent
+        and bool(properties["left_translation_bijective"])
+    ):
+        classes.append("left_quandle")
+    if (
+        right_sd
+        and idempotent
+        and bool(properties["right_translation_bijective"])
+    ):
+        classes.append("right_quandle")
+
+    if (
+        "left_quandle" in classes
+        and bool(properties["left_involutory"])
+    ):
+        classes.append("left_kei")
+    if (
+        "right_quandle" in classes
+        and bool(properties["right_involutory"])
+    ):
+        classes.append("right_kei")
+
+    if latin:
+        classes.append("quasigroup")
+    if latin and left_identity and right_identity:
+        classes.append("loop")
+    if "loop" in classes and associative:
+        classes.append("group")
+    if "group" in classes and commutative:
+        classes.append("abelian_group")
+
+    if bool(properties["medial"]):
+        classes.append("medial_magma")
+
+    return tuple(classes)
+
+
+def structural_metrics(
+    table: tuple[tuple[int, ...], ...],
+    references: dict[str, tuple[tuple[int, ...], ...]],
+) -> dict[str, object]:
+    row_supports = [
+        len(set(row))
+        for row in table
+    ]
+    column_supports = [
+        len({table[x][y] for x in range(ORDER)})
+        for y in range(ORDER)
+    ]
+
+    entropy = output_entropy(table)
+    max_entropy = math.log2(ORDER)
+    normalised_entropy = (
+        entropy / max_entropy
+        if max_entropy > 0
+        else 0.0
+    )
+
+    left_projection_distance = sum(
+        table[x][y] != x
+        for x in range(ORDER)
+        for y in range(ORDER)
+    ) / (ORDER * ORDER)
+
+    right_projection_distance = sum(
+        table[x][y] != y
+        for x in range(ORDER)
+        for y in range(ORDER)
+    ) / (ORDER * ORDER)
+
+    unique_rows = len(set(table))
+    unique_columns = len(
+        {
+            tuple(table[x][y] for x in range(ORDER))
+            for y in range(ORDER)
+        }
+    )
+
+    average_support = (
+        sum(row_supports) + sum(column_supports)
+    ) / (2 * ORDER * ORDER)
+
+    nearest_reference_name = ""
+    nearest_reference_distance = 1.0
+
+    for name, reference in references.items():
+        distance = min(
+            sum(
+                table[x][y] != transformed[x][y]
+                for x in range(ORDER)
+                for y in range(ORDER)
+            ) / (ORDER * ORDER)
+            for transformed in (
+                relabel_table(reference, permutation)
+                for permutation in PERMUTATIONS
+            )
+        )
+        if distance < nearest_reference_distance:
+            nearest_reference_distance = distance
+            nearest_reference_name = name
+
+    return {
+        "row_supports": row_supports,
+        "column_supports": column_supports,
+        "minimum_row_support": min(row_supports),
+        "minimum_column_support": min(column_supports),
+        "constant_rows": sum(support == 1 for support in row_supports),
+        "constant_columns": sum(
+            support == 1
+            for support in column_supports
+        ),
+        "unique_rows": unique_rows,
+        "unique_columns": unique_columns,
+        "average_support": average_support,
+        "entropy_bits": entropy,
+        "normalised_entropy": normalised_entropy,
+        "left_projection_distance": left_projection_distance,
+        "right_projection_distance": right_projection_distance,
+        "minimum_projection_distance": min(
+            left_projection_distance,
+            right_projection_distance,
+        ),
+        "nearest_reference_name": nearest_reference_name,
+        "nearest_reference_distance": nearest_reference_distance,
+    }
+
+
+def passes_nondegeneracy(
+    metrics: dict[str, object],
+) -> bool:
+    return (
+        int(metrics["constant_rows"]) == 0
+        and int(metrics["constant_columns"]) == 0
+        and int(metrics["minimum_row_support"]) >= 2
+        and int(metrics["minimum_column_support"]) >= 2
+        and int(metrics["unique_rows"]) == ORDER
+        and int(metrics["unique_columns"]) == ORDER
+        and float(metrics["average_support"]) >= MIN_AVERAGE_SUPPORT
+        and float(metrics["normalised_entropy"]) >= MIN_NORMALISED_ENTROPY
+        and float(metrics["minimum_projection_distance"])
+            >= MIN_PROJECTION_DISTANCE
+        and float(metrics["nearest_reference_distance"])
+            >= MIN_REFERENCE_DISTANCE
+    )
+
+
+
+def law_fingerprint(properties: dict[str, object]) -> tuple[object, ...]:
+    return (
+        *(bool(properties[key]) for key in LAW_KEYS),
+        properties["left_identity"] is not None,
+        properties["right_identity"] is not None,
+    )
+
+
+def output_entropy(table: tuple[tuple[int, ...], ...]) -> float:
+    counts = Counter(value for row in table for value in row)
+    total = ORDER * ORDER
+    return -sum(
+        (count / total) * math.log2(count / total)
+        for count in counts.values()
+    )
+
+
+def first_counterexample(
+    table: tuple[tuple[int, ...], ...],
+    law: str,
+) -> tuple[int, ...] | None:
+    elements = range(ORDER)
+
+    if law == "commutative":
+        for x in elements:
+            for y in elements:
+                if table[x][y] != table[y][x]:
+                    return (x, y)
+
+    if law == "associative":
+        for x in elements:
+            for y in elements:
+                for z in elements:
+                    if table[table[x][y]][z] != table[x][table[y][z]]:
+                        return (x, y, z)
+
+    if law == "left_alternative":
+        for x in elements:
+            for y in elements:
+                if table[x][table[x][y]] != table[table[x][x]][y]:
+                    return (x, y)
+
+    if law == "right_alternative":
+        for x in elements:
+            for y in elements:
+                if table[table[x][y]][y] != table[x][table[y][y]]:
+                    return (x, y)
+
+    if law == "medial":
+        for x in elements:
+            for y in elements:
+                for z in elements:
+                    for w in elements:
+                        if (
+                            table[table[x][y]][table[z][w]]
+                            != table[table[x][z]][table[y][w]]
+                        ):
+                            return (x, y, z, w)
+
+    return None
+
+
+def search_novel_structure(
+    rng: random.Random,
+    catalogues: dict[str, set[tuple[int, ...]]],
+    catalogue_metadata: dict[str, object],
+    excluded_canonical: set[tuple[int, ...]] | None = None,
+) -> tuple[StructureCandidate, dict[str, object]]:
+    automorphism = symmetry_permutation()
+    references = reference_library()
+
+    rejection_catalogues = {
+        name: values
+        for name, values in catalogues.items()
+        if name != "core_references"
+    }
+
+    excluded_canonical = excluded_canonical or set()
+    seen_classes: set[tuple[int, ...]] = set()
+    candidates: list[StructureCandidate] = []
+    rejection_counts: Counter[str] = Counter()
+    fingerprint_counts: Counter[tuple[object, ...]] = Counter()
+
+    for sample_index in range(SAMPLES):
+        table = generate_equivariant_table(rng, automorphism)
+        canonical = canonical_form(table)
+
+        if canonical in seen_classes:
+            rejection_counts["duplicate_isomorphism_class"] += 1
+            continue
+        seen_classes.add(canonical)
+
+        if canonical in excluded_canonical:
+            rejection_counts["discovered_in_earlier_cycle"] += 1
+            continue
+
+        memberships = tuple(
+            name
+            for name, catalogue in catalogues.items()
+            if canonical in catalogue
+        )
+
+        if memberships:
+            for membership in memberships:
+                rejection_counts[f"catalogue:{membership}"] += 1
+            continue
+
+        properties = analyse_properties(table)
+        classifications = classify_structure(properties)
+        metrics = structural_metrics(table, references)
+
+        if not bool(properties["surjective"]):
+            rejection_counts["not_surjective"] += 1
+            continue
+        if bool(properties["associative"]):
+            rejection_counts["associative"] += 1
+            continue
+        if not passes_nondegeneracy(metrics):
+            rejection_counts["nondegeneracy_gate"] += 1
+            continue
+
+        interesting_count = sum(
+            bool(properties[key])
+            for key in INTERESTING_LAWS
+        )
+        if interesting_count < 1:
+            rejection_counts["no_retained_special_law"] += 1
+            continue
+
+        fingerprint = law_fingerprint(properties)
+        fingerprint_counts[fingerprint] += 1
+
+        candidates.append(
+            StructureCandidate(
+                table=table,
+                canonical=canonical,
+                properties=properties,
+                classifications=classifications,
+                metrics=metrics,
+                fingerprint=fingerprint,
+                entropy=float(metrics["entropy_bits"]),
+                interesting_law_count=interesting_count,
+                sample_index=sample_index,
+                catalogue_memberships=(),
+                novelty_label=(
+                    "outside_complete_generated_order_catalogues"
+                    if bool(catalogue_metadata.get("complete"))
+                    else "outside_partial_reference_catalogues"
+                ),
+            )
+        )
+
+    if not candidates:
+        raise RuntimeError(
+            "No candidate passed the strengthened catalogue and "
+            "non-degeneracy gates. Increase HXC_SAMPLES or relax an explicit "
+            "HXC_MIN_* threshold."
+        )
+
+    scored: list[StructureCandidate] = []
+
+    for candidate in candidates:
+        properties = candidate.properties
+        metrics = candidate.metrics
+        exploration_frequency = fingerprint_counts[candidate.fingerprint]
+
+        # Sample frequency is reported for exploration only. It contributes
+        # nothing to the mathematical-interest score.
+        score = (
+            3.0 * candidate.interesting_law_count
+            + 8.0 * float(metrics["normalised_entropy"])
+            + 10.0 * float(metrics["average_support"])
+            + 6.0 * float(metrics["minimum_projection_distance"])
+            + 6.0 * float(metrics["nearest_reference_distance"])
+            + 1.5 * (not bool(properties["commutative"]))
+            + 1.0 * (
+                properties["left_identity"] is not None
+                or properties["right_identity"] is not None
+            )
+        )
+
+        scored.append(
+            StructureCandidate(
+                table=candidate.table,
+                canonical=candidate.canonical,
+                properties=candidate.properties,
+                classifications=candidate.classifications,
+                metrics=candidate.metrics,
+                fingerprint=candidate.fingerprint,
+                entropy=candidate.entropy,
+                interesting_law_count=candidate.interesting_law_count,
+                sample_index=candidate.sample_index,
+                score=score,
+                exploration_fingerprint_frequency=exploration_frequency,
+                catalogue_memberships=candidate.catalogue_memberships,
+                novelty_label=candidate.novelty_label,
+            )
+        )
+
+    selected = max(
+        scored,
+        key=lambda candidate: (
+            candidate.score,
+            float(candidate.metrics["average_support"]),
+            float(candidate.metrics["normalised_entropy"]),
+            float(candidate.metrics["minimum_projection_distance"]),
+            -candidate.sample_index,
+        ),
+    )
+
+    statistics: dict[str, object] = {
+        "samples_requested": SAMPLES,
+        "isomorphism_classes_seen": len(seen_classes),
+        "qualifying_classes": len(candidates),
+        "catalogue_complete": bool(catalogue_metadata.get("complete")),
+        "catalogue_scope": catalogue_metadata.get("scope"),
+        "catalogue_counts": catalogue_metadata.get("counts", {}),
+        "catalogue_hashes": catalogue_metadata.get("hashes", {}),
+        "rejection_counts": dict(sorted(rejection_counts.items())),
+        "score_uses_sample_rarity": False,
+        "historical_novelty_verified": False,
+    }
+    return selected, statistics
+
+
+# ---------------------------------------------------------------------------
+# Lean source generation
+# ---------------------------------------------------------------------------
+
+def lean_named_operation_definition(
+    table: tuple[tuple[int, ...], ...],
+    name: str,
+) -> str:
+    def row_expression(x: int) -> str:
+        parts: list[str] = []
+        for y in range(ORDER - 1):
+            parts.append(
+                f"if y.val = {y} then mkCarrier {table[x][y]} else "
+            )
+        parts.append(f"mkCarrier {table[x][ORDER - 1]}")
+        return "".join(parts)
+
+    lines = [
+        f"def {name} (x y : Carrier) : Carrier :=",
+    ]
+    for x in range(ORDER - 1):
+        lines.append(
+            f"  if x.val = {x} then {row_expression(x)}"
+        )
+        lines.append("  else")
+    lines.append(f"    {row_expression(ORDER - 1)}")
+    return "\n".join(lines)
+
+
+def lean_operation_definition(
+    table: tuple[tuple[int, ...], ...],
+) -> str:
+    return lean_named_operation_definition(table, "alienLaw")
+
+
+def lean_symmetry_definition(
+    automorphism: tuple[int, ...],
+) -> str:
+    lines = ["def alienSymmetry (x : Carrier) : Carrier :="]
+    for x in range(ORDER - 1):
+        lines.append(
+            f"  if x.val = {x} then mkCarrier {automorphism[x]}"
+        )
+        lines.append("  else")
+    lines.append(f"    mkCarrier {automorphism[ORDER - 1]}")
+    return "\n".join(lines)
+
+
+def lean_true_law_theorems(properties: dict[str, object]) -> str:
+    theorem_templates = {
+        "commutative": """theorem alien_commutative :
+    ∀ x y : Carrier, alienLaw x y = alienLaw y x := by
+  decide
+""",
+        "associative": """theorem alien_associative :
+    ∀ x y z : Carrier,
+      alienLaw (alienLaw x y) z = alienLaw x (alienLaw y z) := by
+  decide
+""",
+        "idempotent": """theorem alien_idempotent :
+    ∀ x : Carrier, alienLaw x x = x := by
+  decide
+""",
+        "flexible": """theorem alien_flexible :
+    ∀ x y : Carrier,
+      alienLaw x (alienLaw y x) = alienLaw (alienLaw x y) x := by
+  decide
+""",
+        "left_alternative": """theorem alien_left_alternative :
+    ∀ x y : Carrier,
+      alienLaw x (alienLaw x y) = alienLaw (alienLaw x x) y := by
+  decide
+""",
+        "right_alternative": """theorem alien_right_alternative :
+    ∀ x y : Carrier,
+      alienLaw (alienLaw x y) y = alienLaw x (alienLaw y y) := by
+  decide
+""",
+        "medial": """theorem alien_medial :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw x y) (alienLaw z w) =
+      alienLaw (alienLaw x z) (alienLaw y w) := by
+  decide
+""",
+        "left_self_distributive": """theorem alien_left_self_distributive :
+    ∀ x y z : Carrier,
+      alienLaw x (alienLaw y z) =
+      alienLaw (alienLaw x y) (alienLaw x z) := by
+  decide
+""",
+        "right_self_distributive": """theorem alien_right_self_distributive :
+    ∀ x y z : Carrier,
+      alienLaw (alienLaw x y) z =
+      alienLaw (alienLaw x z) (alienLaw y z) := by
+  decide
+""",
+        "latin": """theorem alien_latin :
+    (∀ x a : Carrier, ∃! y : Carrier, alienLaw x y = a) ∧
+    (∀ y a : Carrier, ∃! x : Carrier, alienLaw x y = a) := by
+  decide
+""",
+        "surjective": """theorem alien_surjective :
+    ∀ target : Carrier, ∃ x y : Carrier, alienLaw x y = target := by
+  decide
+""",
+    }
+
+    selected = [
+        theorem_templates[key]
+        for key in LAW_KEYS
+        if bool(properties[key])
+    ]
+    return "\n".join(selected)
+
+
+
+def lean_nondegeneracy_theorems() -> str:
+    return """theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem rows_are_pairwise_distinct :
+    ∀ x z : Carrier,
+      x ≠ z →
+      ∃ y : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem columns_are_pairwise_distinct :
+    ∀ y w : Carrier,
+      y ≠ w →
+      ∃ x : Carrier, alienLaw x y ≠ alienLaw x w := by
+  decide
+
+theorem alien_not_left_projection :
+    ∃ x y : Carrier, alienLaw x y ≠ x := by
+  decide
+
+theorem alien_not_right_projection :
+    ∃ x y : Carrier, alienLaw x y ≠ y := by
+  decide
+"""
+
+
+def lean_classification_predicates(
+    table: tuple[tuple[int, ...], ...],
+) -> str:
+    """Generate class predicates and explicit finite exclusion proofs.
+
+    We intentionally avoid `∃!` notation and avoid asking `decide` to infer
+    decidability for large quantified function propositions.  Instead, Python
+    supplies concrete counterexample indices and Lean kernel-checks the exact
+    equalities and inequalities.
+    """
+
+    left_sd_witness: tuple[int, int, int] | None = None
+    right_sd_witness: tuple[int, int, int] | None = None
+
+    for x in range(ORDER):
+        for y in range(ORDER):
+            for z in range(ORDER):
+                if (
+                    table[x][table[y][z]]
+                    != table[table[x][y]][table[x][z]]
+                    and left_sd_witness is None
+                ):
+                    left_sd_witness = (x, y, z)
+
+                if (
+                    table[table[x][y]][z]
+                    != table[table[x][z]][table[y][z]]
+                    and right_sd_witness is None
+                ):
+                    right_sd_witness = (x, y, z)
+
+    if left_sd_witness is None:
+        raise RuntimeError(
+            "Selected candidate unexpectedly satisfies the left-shelf law."
+        )
+    if right_sd_witness is None:
+        raise RuntimeError(
+            "Selected candidate unexpectedly satisfies the right-shelf law."
+        )
+
+    quasigroup_witness: tuple[str, int, int, int] | None = None
+
+    # A finite translation is non-bijective exactly when two distinct inputs
+    # collide.  Prefer a row collision, then fall back to a column collision.
+    for x in range(ORDER):
+        for y in range(ORDER):
+            for z in range(y + 1, ORDER):
+                if table[x][y] == table[x][z]:
+                    quasigroup_witness = ("row", x, y, z)
+                    break
+            if quasigroup_witness is not None:
+                break
+        if quasigroup_witness is not None:
+            break
+
+    if quasigroup_witness is None:
+        for y in range(ORDER):
+            for x in range(ORDER):
+                for z in range(x + 1, ORDER):
+                    if table[x][y] == table[z][y]:
+                        quasigroup_witness = ("column", y, x, z)
+                        break
+                if quasigroup_witness is not None:
+                    break
+            if quasigroup_witness is not None:
+                break
+
+    if quasigroup_witness is None:
+        raise RuntimeError(
+            "Selected candidate unexpectedly has bijective translations."
+        )
+
+    lx, ly, lz = left_sd_witness
+    rx, ry, rz = right_sd_witness
+
+    if quasigroup_witness[0] == "row":
+        _, qx, qy, qz = quasigroup_witness
+        quasigroup_proof = f"""theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier {qx}) (mkCarrier {qy}) =
+      alienLaw (mkCarrier {qx}) (mkCarrier {qz}) := by
+    decide
+  have equalInputs :
+      mkCarrier {qy} = mkCarrier {qz} :=
+    h.1.1
+      (mkCarrier {qx})
+      (mkCarrier {qy})
+      (mkCarrier {qz})
+      sameOutput
+  have differentInputs :
+      mkCarrier {qy} ≠ mkCarrier {qz} := by
+    decide
+  exact differentInputs equalInputs
+"""
+    else:
+        _, qy, qx, qz = quasigroup_witness
+        quasigroup_proof = f"""theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier {qx}) (mkCarrier {qy}) =
+      alienLaw (mkCarrier {qz}) (mkCarrier {qy}) := by
+    decide
+  have equalInputs :
+      mkCarrier {qx} = mkCarrier {qz} :=
+    h.2.1
+      (mkCarrier {qy})
+      (mkCarrier {qx})
+      (mkCarrier {qz})
+      sameOutput
+  have differentInputs :
+      mkCarrier {qx} ≠ mkCarrier {qz} := by
+    decide
+  exact differentInputs equalInputs
+"""
+
+    return f"""def IsLeftShelf
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  ∀ x y z,
+    law x (law y z) =
+    law (law x y) (law x z)
+
+def IsRightShelf
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  ∀ x y z,
+    law (law x y) z =
+    law (law x z) (law y z)
+
+def IsIdempotent
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  ∀ x, law x x = x
+
+def LeftTranslationsBijective
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  (∀ x y z, law x y = law x z → y = z) ∧
+  (∀ x target, ∃ y, law x y = target)
+
+def RightTranslationsBijective
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  (∀ y x z, law x y = law z y → x = z) ∧
+  (∀ y target, ∃ x, law x y = target)
+
+def IsLeftSpindle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsLeftShelf law ∧ IsIdempotent law
+
+def IsRightSpindle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsRightShelf law ∧ IsIdempotent law
+
+def IsLeftRack
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsLeftShelf law ∧ LeftTranslationsBijective law
+
+def IsRightRack
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsRightShelf law ∧ RightTranslationsBijective law
+
+def IsLeftQuandle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsLeftRack law ∧ IsIdempotent law
+
+def IsRightQuandle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsRightRack law ∧ IsIdempotent law
+
+def IsQuasigroup
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  LeftTranslationsBijective law ∧
+  RightTranslationsBijective law
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier {lx})
+      (mkCarrier {ly})
+      (mkCarrier {lz})
+  have counterexample :
+      alienLaw
+        (mkCarrier {lx})
+        (alienLaw (mkCarrier {ly}) (mkCarrier {lz})) ≠
+      alienLaw
+        (alienLaw (mkCarrier {lx}) (mkCarrier {ly}))
+        (alienLaw (mkCarrier {lx}) (mkCarrier {lz})) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier {rx})
+      (mkCarrier {ry})
+      (mkCarrier {rz})
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier {rx}) (mkCarrier {ry}))
+        (mkCarrier {rz}) ≠
+      alienLaw
+        (alienLaw (mkCarrier {rx}) (mkCarrier {rz}))
+        (alienLaw (mkCarrier {ry}) (mkCarrier {rz})) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_left_spindle :
+    ¬ IsLeftSpindle alienLaw := by
+  intro h
+  exact alien_not_left_shelf h.1
+
+theorem alien_not_right_spindle :
+    ¬ IsRightSpindle alienLaw := by
+  intro h
+  exact alien_not_right_shelf h.1
+
+theorem alien_not_left_rack :
+    ¬ IsLeftRack alienLaw := by
+  intro h
+  exact alien_not_left_shelf h.1
+
+theorem alien_not_right_rack :
+    ¬ IsRightRack alienLaw := by
+  intro h
+  exact alien_not_right_shelf h.1
+
+theorem alien_not_left_quandle :
+    ¬ IsLeftQuandle alienLaw := by
+  intro h
+  exact alien_not_left_rack h.1
+
+theorem alien_not_right_quandle :
+    ¬ IsRightQuandle alienLaw := by
+  intro h
+  exact alien_not_right_rack h.1
+
+{quasigroup_proof}
+"""
+
+
+
+def lean_identity_theorems(properties: dict[str, object]) -> str:
+    blocks: list[str] = []
+
+    left_identity = properties["left_identity"]
+    right_identity = properties["right_identity"]
+
+    if left_identity is not None:
+        blocks.append(
+            f"""def alienLeftIdentity : Carrier := mkCarrier {left_identity}
+
+theorem alien_left_identity :
+    ∀ x : Carrier, alienLaw alienLeftIdentity x = x := by
+  decide
+"""
+        )
+    else:
+        blocks.append(
+            """theorem alien_has_no_left_identity :
+    ¬ ∃ identity : Carrier, ∀ x : Carrier, alienLaw identity x = x := by
+  decide
+"""
+        )
+
+    if right_identity is not None:
+        blocks.append(
+            f"""def alienRightIdentity : Carrier := mkCarrier {right_identity}
+
+theorem alien_right_identity :
+    ∀ x : Carrier, alienLaw x alienRightIdentity = x := by
+  decide
+"""
+        )
+    else:
+        blocks.append(
+            """theorem alien_has_no_right_identity :
+    ¬ ∃ identity : Carrier, ∀ x : Carrier, alienLaw x identity = x := by
+  decide
+"""
+        )
+
+    return "\n".join(blocks)
+
+
+def lean_counterexample_theorems(
+    table: tuple[tuple[int, ...], ...],
+    properties: dict[str, object],
+) -> str:
+    blocks: list[str] = []
+
+    if not bool(properties["commutative"]):
+        witness = first_counterexample(table, "commutative")
+        assert witness is not None
+        x, y = witness
+        blocks.append(
+            f"""theorem rejected_commutativity :
+    alienLaw (mkCarrier {x}) (mkCarrier {y}) ≠
+    alienLaw (mkCarrier {y}) (mkCarrier {x}) := by
+  decide
+"""
+        )
+
+    if not bool(properties["associative"]):
+        witness = first_counterexample(table, "associative")
+        assert witness is not None
+        x, y, z = witness
+        blocks.append(
+            f"""theorem rejected_associativity :
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {y}))
+      (mkCarrier {z}) ≠
+    alienLaw
+      (mkCarrier {x})
+      (alienLaw (mkCarrier {y}) (mkCarrier {z})) := by
+  decide
+"""
+        )
+
+    if not bool(properties["left_alternative"]):
+        witness = first_counterexample(table, "left_alternative")
+        if witness is not None:
+            x, y = witness
+            blocks.append(
+                f"""theorem rejected_left_alternative :
+    alienLaw
+      (mkCarrier {x})
+      (alienLaw (mkCarrier {x}) (mkCarrier {y})) ≠
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {x}))
+      (mkCarrier {y}) := by
+  decide
+"""
+            )
+
+    if not bool(properties["medial"]):
+        witness = first_counterexample(table, "medial")
+        if witness is not None:
+            x, y, z, w = witness
+            blocks.append(
+                f"""theorem rejected_mediality :
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {y}))
+      (alienLaw (mkCarrier {z}) (mkCarrier {w})) ≠
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {z}))
+      (alienLaw (mkCarrier {y}) (mkCarrier {w})) := by
+  decide
+"""
+            )
+
+    return "\n".join(blocks)
+
+
+def reference_definitions() -> str:
+    return """def leftProjection (x _ : Carrier) : Carrier := x
+def rightProjection (_ y : Carrier) : Carrier := y
+def constantZero (_ _ : Carrier) : Carrier := mkCarrier 0
+def modularAddition (x y : Carrier) : Carrier := mkCarrier (x.val + y.val)
+def modularMultiplication (x y : Carrier) : Carrier := mkCarrier (x.val * y.val)
+def modularSubtraction (x y : Carrier) : Carrier :=
+  mkCarrier (x.val + order - y.val)
+def minimumLaw (x y : Carrier) : Carrier := mkCarrier (min x.val y.val)
+def maximumLaw (x y : Carrier) : Carrier := mkCarrier (max x.val y.val)
+"""
+
+
+
+def lean_relabeling_universe() -> str:
+    """Generate every carrier permutation as an explicit Lean constructor.
+
+    This avoids asking Lean to synthesize decidability for an existential over
+    arbitrary functions. The resulting checker ranges over exactly ORDER!
+    generated relabellings.
+    """
+
+    permutations_list = list(PERMUTATIONS)
+    constructor_names = [f"p{index}" for index in range(len(permutations_list))]
+
+    inductive_lines = [
+        "inductive Relabeling where",
+        *[f"  | {name}" for name in constructor_names],
+        "deriving DecidableEq, Repr",
+        "",
+    ]
+
+    def carrier_expression(permutation: tuple[int, ...]) -> str:
+        pieces: list[str] = []
+        for source_value in range(ORDER - 1):
+            pieces.append(
+                f"if x.val = {source_value} then "
+                f"mkCarrier {permutation[source_value]} else "
+            )
+        pieces.append(f"mkCarrier {permutation[ORDER - 1]}")
+        return "".join(pieces)
+
+    apply_lines = [
+        "def applyRelabeling : Relabeling → Carrier → Carrier",
+    ]
+    for name, permutation in zip(
+        constructor_names,
+        permutations_list,
+        strict=True,
+    ):
+        apply_lines.append(
+            f"  | .{name}, x => {carrier_expression(permutation)}"
+        )
+    apply_lines.append("")
+
+    registry_items = ", ".join(f".{name}" for name in constructor_names)
+    registry_lines = [
+        "def allRelabelings : List Relabeling :=",
+        f"  [{registry_items}]",
+        "",
+        "def relabelingInjective (relabel : Relabeling) : Bool :=",
+        "  (List.range order).all",
+        "    (fun x =>",
+        "      (List.range order).all",
+        "        (fun y =>",
+        "          if applyRelabeling relabel (mkCarrier x) ==",
+        "              applyRelabeling relabel (mkCarrier y) then",
+        "            x == y",
+        "          else",
+        "            true))",
+        "",
+        "theorem relabeling_registry_size :",
+        f"    allRelabelings.length = {len(permutations_list)} := by",
+        "  decide",
+        "",
+        "theorem relabeling_registry_nodup :",
+        "    allRelabelings.Nodup := by",
+        "  decide",
+        "",
+        "theorem every_registered_relabeling_is_injective :",
+        "    allRelabelings.all relabelingInjective = true := by",
+        "  decide",
+        "",
+        "def preservesOperation",
+        "    (relabel : Relabeling)",
+        "    (first second : Carrier → Carrier → Carrier) :",
+        "    Bool :=",
+        "  (List.range order).all",
+        "    (fun x =>",
+        "      (List.range order).all",
+        "        (fun y =>",
+        "          applyRelabeling relabel",
+        "              (first (mkCarrier x) (mkCarrier y)) ==",
+        "            second",
+        "              (applyRelabeling relabel (mkCarrier x))",
+        "              (applyRelabeling relabel (mkCarrier y))))",
+        "",
+        "def isomorphicBool",
+        "    (first second : Carrier → Carrier → Carrier) :",
+        "    Bool :=",
+        "  allRelabelings.any",
+        "    (fun relabel => preservesOperation relabel first second)",
+        "",
+        "/--",
+        "Finite isomorphism over the explicitly generated complete permutation",
+        "registry. The Python generator emits every permutation of the carrier;",
+        "Lean verifies the registry size, absence of duplicates, injectivity of",
+        "every entry, and every operation-preservation check.",
+        "-/",
+        "def IsIsomorphic",
+        "    (first second : Carrier → Carrier → Carrier) :",
+        "    Prop :=",
+        "  isomorphicBool first second = true",
+        "",
+    ]
+
+    return "\n".join(inductive_lines + apply_lines + registry_lines)
+
+
+
+def lean_discovered_identity_block(
+    identity: IdentityDiscovery,
+    identity_glyph: UnicodeGlyph,
+) -> str:
+    countermodel_definition = lean_named_operation_definition(
+        identity.countermodel_table,
+        "identityCounterLaw",
+    )
+
+    witness_map = {
+        variable: f"mkCarrier {value}"
+        for variable, value in zip(
+            IDENTITY_VARIABLES,
+            identity.counterexample_assignment,
+            strict=True,
+        )
+    }
+
+    counter_lhs = term_lean(
+        identity.lhs,
+        law_name="identityCounterLaw",
+        variable_map=witness_map,
+    )
+    counter_rhs = term_lean(
+        identity.rhs,
+        law_name="identityCounterLaw",
+        variable_map=witness_map,
+    )
+
+    seed_codes = sorted(seed_identity_codes())
+    variable_binders = " ".join(identity.variables)
+
+    return f"""/-!
+## Machine-synthesised identity
+
+Identity glyph:
+* `{identity_glyph.symbol}` ({identity_glyph.codepoint},
+  {identity_glyph.name}, category {identity_glyph.category})
+
+The identity was generated from a term grammar, removed if equivalent to a
+seed law under variable renaming, and retained only after a separate finite
+countermodel was found.
+-/
+
+def discoveredIdentityCode : String :=
+  {json.dumps(identity.canonical_code)}
+
+def seedIdentityCodes : List String :=
+  {json.dumps(seed_codes)}
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ {variable_binders} : Carrier,
+      {identity.lean_lhs} =
+      {identity.lean_rhs} := by
+  decide
+
+{countermodel_definition}
+
+theorem discovered_identity_has_countermodel :
+    {counter_lhs} ≠
+    {counter_rhs} := by
+  decide
+
+structure IdentityDiscoveryCertificate where
+  identityGlyph : String
+  canonicalCode : String
+  displayText : String
+  notInSeedLibrary :
+    canonicalCode ∉ seedIdentityCodes
+  holdsOnInventedStructure :
+    ∀ {variable_binders} : Carrier,
+      {identity.lean_lhs} =
+      {identity.lean_rhs}
+  failsOnIndependentCountermodel :
+    {counter_lhs} ≠
+    {counter_rhs}
+  comparisonModelsSatisfied : Nat
+  comparisonModelsTotal : Nat
+  historicalNoveltyVerified : Bool
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "{identity_glyph.symbol}"
+  canonicalCode := discoveredIdentityCode
+  displayText := {json.dumps(identity.display)}
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := {identity.model_bank_satisfied}
+  comparisonModelsTotal := {identity.model_bank_total}
+  historicalNoveltyVerified := false
+"""
+
+
+
+def nonisomorphism_theorems() -> str:
+    references = (
+        ("left_projection", "leftProjection"),
+        ("right_projection", "rightProjection"),
+        ("constant_zero", "constantZero"),
+        ("modular_addition", "modularAddition"),
+        ("modular_multiplication", "modularMultiplication"),
+        ("modular_subtraction", "modularSubtraction"),
+        ("minimum", "minimumLaw"),
+        ("maximum", "maximumLaw"),
+    )
+
+    blocks = []
+    for theorem_suffix, lean_name in references:
+        blocks.append(
+            f"""theorem alien_not_isomorphic_to_{theorem_suffix} :
+    ¬ IsIsomorphic alienLaw {lean_name} := by
+  change isomorphicBool alienLaw {lean_name} ≠ true
+  decide
+"""
+        )
+    return "\n".join(blocks)
+
+
+def make_lean_source(
+    candidate: StructureCandidate,
+    identity: IdentityDiscovery,
+    structure_glyph: UnicodeGlyph,
+    operation_glyph: UnicodeGlyph,
+    symmetry_glyph: UnicodeGlyph,
+    identity_glyph: UnicodeGlyph,
+) -> str:
+    operation_definition = lean_operation_definition(candidate.table)
+    automorphism = symmetry_permutation()
+    symmetry_definition = lean_symmetry_definition(automorphism)
+    true_laws = lean_true_law_theorems(candidate.properties)
+    nondegeneracy_laws = lean_nondegeneracy_theorems()
+    classification_predicates = lean_classification_predicates(candidate.table)
+    identity_laws = lean_identity_theorems(candidate.properties)
+    counterexamples = lean_counterexample_theorems(
+        candidate.table,
+        candidate.properties,
+    )
+    references = reference_definitions()
+    relabeling_universe = lean_relabeling_universe()
+    noniso = nonisomorphism_theorems()
+    identity_block = lean_discovered_identity_block(
+        identity,
+        identity_glyph,
+    )
+
+    true_law_names = [
+        key
+        for key in LAW_KEYS
+        if bool(candidate.properties[key])
+    ]
+    catalogue_scope = candidate.novelty_label
+    catalogue_manifest_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "classifications": candidate.classifications,
+                "metrics": candidate.metrics,
+                "catalogue_memberships": candidate.catalogue_memberships,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    return f"""import Std
+
+namespace HXCNovel
+
+/-!
+# HXC AI-Generated Novel Finite Structure
+
+Structure sigil:
+* `{structure_glyph.symbol}` ({structure_glyph.codepoint},
+  {structure_glyph.name}, category {structure_glyph.category})
+
+Binary operation:
+* `{operation_glyph.symbol}` ({operation_glyph.codepoint},
+  {operation_glyph.name}, category {operation_glyph.category})
+
+Automorphism:
+* `{symmetry_glyph.symbol}` ({symmetry_glyph.codepoint},
+  {symmetry_glyph.name}, category {symmetry_glyph.category})
+
+Discovered theorem:
+* `{identity_glyph.symbol}` ({identity_glyph.codepoint},
+  {identity_glyph.name}, category {identity_glyph.category})
+
+The table was selected from arbitrary finite operation tables after:
+
+* isomorphism-class deduplication;
+* complete generated shelf/quandle/quasigroup catalogue rejection;
+* two-argument non-degeneracy and entropy gates;
+* structural-interest scoring with sample rarity excluded;
+* counterexample search;
+* nontrivial automorphism enforcement.
+
+The formal novelty claims below are relative to the stated reference library.
+-/
+
+def order : Nat := {ORDER}
+
+theorem order_positive :
+    0 < order := by
+  decide
+
+abbrev Carrier := Fin order
+
+def mkCarrier (value : Nat) : Carrier :=
+  ⟨value % order, Nat.mod_lt _ order_positive⟩
+
+{operation_definition}
+
+{symmetry_definition}
+
+/-! ## Discovered positive laws -/
+
+{true_laws}
+
+{identity_laws}
+
+/-! ## Non-degeneracy certificates -/
+
+{nondegeneracy_laws}
+
+/-! ## Variety classification and exclusion -/
+
+{classification_predicates}
+
+/-! ## Nontrivial symmetry -/
+
+theorem symmetry_is_involution :
+    ∀ x : Carrier, alienSymmetry (alienSymmetry x) = x := by
+  decide
+
+theorem symmetry_is_automorphism :
+    ∀ x y : Carrier,
+      alienSymmetry (alienLaw x y) =
+      alienLaw (alienSymmetry x) (alienSymmetry y) := by
+  decide
+
+theorem symmetry_is_nontrivial :
+    alienSymmetry (mkCarrier 0) ≠ mkCarrier 0 := by
+  decide
+
+/-! ## Falsified conjectures retained as counterexamples -/
+
+{counterexamples}
+
+/-! ## Reference-library non-isomorphism certificates -/
+
+{references}
+
+{relabeling_universe}
+
+{noniso}
+
+{identity_block}
+
+/-! ## Proof-carrying structure certificate -/
+
+structure NovelStructureCertificate where
+  structureGlyph : String
+  operationGlyph : String
+  symmetryGlyph : String
+  law : Carrier → Carrier → Carrier
+  symmetry : Carrier → Carrier
+  positiveLawNames : List String
+  symmetryInvolution :
+    ∀ x, symmetry (symmetry x) = x
+  symmetryAutomorphism :
+    ∀ x y, symmetry (law x y) = law (symmetry x) (symmetry y)
+  symmetryNontrivial :
+    symmetry (mkCarrier 0) ≠ mkCarrier 0
+  everyRowDependsOnRight :
+    ∀ x, ∃ y z, law x y ≠ law x z
+  everyColumnDependsOnLeft :
+    ∀ y, ∃ x z, law x y ≠ law z y
+  notLeftShelf :
+    ¬ IsLeftShelf law
+  notRightShelf :
+    ¬ IsRightShelf law
+  notQuasigroup :
+    ¬ IsQuasigroup law
+  catalogueScope : String
+  catalogueManifestHash : String
+  historicalNoveltyVerified : Bool
+  notProjectionLeft :
+    ¬ IsIsomorphic law leftProjection
+  notProjectionRight :
+    ¬ IsIsomorphic law rightProjection
+  notConstantZero :
+    ¬ IsIsomorphic law constantZero
+  notModularAddition :
+    ¬ IsIsomorphic law modularAddition
+  notModularMultiplication :
+    ¬ IsIsomorphic law modularMultiplication
+  notModularSubtraction :
+    ¬ IsIsomorphic law modularSubtraction
+  notMinimum :
+    ¬ IsIsomorphic law minimumLaw
+  notMaximum :
+    ¬ IsIsomorphic law maximumLaw
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "{structure_glyph.symbol}"
+  operationGlyph := "{operation_glyph.symbol}"
+  symmetryGlyph := "{symmetry_glyph.symbol}"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := {json.dumps(true_law_names)}
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "{catalogue_scope}"
+  catalogueManifestHash := "{catalogue_manifest_hash}"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+def operationTable : List (List Nat) :=
+  (List.range order).map
+    (fun x =>
+      (List.range order).map
+        (fun y => (alienLaw (mkCarrier x) (mkCarrier y)).val))
+
+def symmetryTable : List Nat :=
+  (List.range order).map
+    (fun x => (alienSymmetry (mkCarrier x)).val)
+
+#eval operationTable
+#eval symmetryTable
+
+#check relabeling_registry_size
+#check relabeling_registry_nodup
+#check every_registered_relabeling_is_injective
+#check every_row_depends_on_right_argument
+#check every_column_depends_on_left_argument
+#check alien_not_left_shelf
+#check alien_not_right_shelf
+#check alien_not_quasigroup
+#check discovered_identity_not_in_seed_library
+#check discovered_symbolic_identity
+#check discovered_identity_has_countermodel
+#check identityDiscoveryCertificate
+#check noveltyCertificate
+#check symmetry_is_automorphism
+#check rejected_associativity
+#check alien_not_isomorphic_to_modular_addition
+#check alien_not_isomorphic_to_modular_multiplication
+
+end HXCNovel
+"""
+
+
+# ---------------------------------------------------------------------------
+# Reports and generated project
+# ---------------------------------------------------------------------------
+
+def build_report(
+    candidate: StructureCandidate,
+    identity: IdentityDiscovery,
+    statistics: dict[str, object],
+    structure_glyph: UnicodeGlyph,
+    operation_glyph: UnicodeGlyph,
+    symmetry_glyph: UnicodeGlyph,
+    identity_glyph: UnicodeGlyph,
+) -> str:
+    true_laws = [
+        key
+        for key in LAW_KEYS
+        if bool(candidate.properties[key])
+    ]
+    false_laws = [
+        key
+        for key in LAW_KEYS
+        if not bool(candidate.properties[key])
+    ]
+
+    header = "| " + " | ".join(map(str, range(ORDER))) + " |"
+    separator = "|" + "|".join(["---"] * ORDER) + "|"
+    rows = "\n".join(
+        "| " + " | ".join(map(str, row)) + " |"
+        for row in candidate.table
+    )
+
+    catalogue_counts = statistics.get("catalogue_counts", {})
+    catalogue_hashes = statistics.get("catalogue_hashes", {})
+
+    catalogue_lines = "\n".join(
+        f"- `{name}`: {catalogue_counts[name]:,} classes; "
+        f"SHA-256 `{catalogue_hashes.get(name, '')}`"
+        for name in sorted(catalogue_counts)
+    )
+
+    metrics = candidate.metrics
+
+    return f"""# HXC Strengthened Structure Invention Report
+
+## Structure identity
+
+- Structure sigil: `{structure_glyph.symbol}`
+- Structure code point: `{structure_glyph.codepoint}`
+- Structure Unicode name: **{structure_glyph.name}**
+- Binary operation: `{operation_glyph.symbol}`
+- Operation code point: `{operation_glyph.codepoint}`
+- Operation Unicode name: **{operation_glyph.name}**
+- Symmetry glyph: `{symmetry_glyph.symbol}`
+- Symmetry code point: `{symmetry_glyph.codepoint}`
+- Symmetry Unicode name: **{symmetry_glyph.name}**
+- Identity glyph: `{identity_glyph.symbol}`
+- Identity code point: `{identity_glyph.codepoint}`
+- Identity Unicode name: **{identity_glyph.name}**
+
+## Honest novelty labels
+
+- Search status: `{candidate.novelty_label}`
+- Historical novelty: `unverified`
+- Catalogue completeness at this order:
+  `{statistics["catalogue_complete"]}`
+- Catalogue scope: {statistics["catalogue_scope"]}
+- Sample-frequency rarity was **not used** in the score.
+- Exploration fingerprint frequency:
+  `{candidate.exploration_fingerprint_frequency}`
+
+## Classification
+
+{chr(10).join(f"- `{name}`" for name in candidate.classifications)}
+
+The generated Lean file separately certifies that the final candidate is not a
+left shelf, right shelf, spindle, rack, quandle, or quasigroup.
+
+## Complete generated catalogues
+
+{catalogue_lines}
+
+## Search
+
+- Carrier order: `{ORDER}`
+- Random seed: `{SEED}`
+- Tables sampled: `{statistics["samples_requested"]:,}`
+- Isomorphism classes encountered:
+  `{statistics["isomorphism_classes_seen"]:,}`
+- Candidates passing every strengthened gate:
+  `{statistics["qualifying_classes"]:,}`
+- Selected sample index: `{candidate.sample_index:,}`
+- Structural-interest score: `{candidate.score:.6f}`
+
+## Non-degeneracy audit
+
+- Row supports: `{metrics["row_supports"]}`
+- Column supports: `{metrics["column_supports"]}`
+- Constant rows: `{metrics["constant_rows"]}`
+- Constant columns: `{metrics["constant_columns"]}`
+- Unique rows: `{metrics["unique_rows"]}/{ORDER}`
+- Unique columns: `{metrics["unique_columns"]}/{ORDER}`
+- Average support: `{metrics["average_support"]:.6f}`
+- Entropy: `{metrics["entropy_bits"]:.6f}` bits
+- Normalised entropy: `{metrics["normalised_entropy"]:.6f}`
+- Distance from left projection:
+  `{metrics["left_projection_distance"]:.6f}`
+- Distance from right projection:
+  `{metrics["right_projection_distance"]:.6f}`
+- Nearest core reference:
+  `{metrics["nearest_reference_name"]}`
+- Distance from nearest reference orbit:
+  `{metrics["nearest_reference_distance"]:.6f}`
+
+Required gates:
+
+- every row and column is nonconstant;
+- every row and column is distinct;
+- minimum row and column support is at least 2;
+- normalised entropy is at least `{MIN_NORMALISED_ENTROPY}`;
+- projection distance is at least `{MIN_PROJECTION_DISTANCE}`;
+- nearest-reference distance is at least `{MIN_REFERENCE_DISTANCE}`;
+- average support is at least `{MIN_AVERAGE_SUPPORT}`.
+
+## Positive laws
+
+{chr(10).join(f"- `{law}`" for law in true_laws)}
+
+## Rejected laws
+
+{chr(10).join(f"- `{law}`" for law in false_laws)}
+
+False laws are retained through concrete Lean counterexample theorems.
+
+## Machine-synthesised theorem
+
+\\[
+{identity.display}
+\\]
+
+- Canonical identity code: `{identity.canonical_code}`
+- Variables used: `{", ".join(identity.variables)}`
+- Terms searched: `{identity.target_term_count:,}`
+- Non-seeded candidate identities: `{identity.candidate_pair_count:,}`
+- Comparison models satisfying the identity:
+  `{identity.model_bank_satisfied}/{identity.model_bank_total}`
+- Comparison-bank failure rate:
+  `{identity.model_bank_failure_rate:.6f}`
+- Independent countermodel source:
+  `{identity.countermodel_source}`
+- Counterexample assignment:
+  `{dict(zip(IDENTITY_VARIABLES, identity.counterexample_assignment))}`
+- Identity score: `{identity.score:.6f}`
+- Historical novelty: `unverified`
+
+This is a machine-synthesised identity that is absent from the explicit seed
+law library up to variable renaming and side exchange. It is not presented as
+historically unprecedented until an external literature search confirms that.
+
+## Operation table
+
+{header}
+{separator}
+{rows}
+
+## Formal scope
+
+Lean certifies the operation table, positive laws, counterexamples,
+non-degeneracy, witness-derived class exclusions, nontrivial automorphism, and finite
+non-isomorphism checks against the core reference library.
+
+The Python catalogue layer exhaustively generates and hashes the complete
+order-{ORDER} shelf/spindle/rack/quandle/kei and quasigroup catalogues when
+`ORDER <= {COMPLETE_CATALOGUE_MAX_ORDER}`. Absolute historical novelty remains
+explicitly unverified.
+"""
+
+
+def write_project(
+    candidate: StructureCandidate,
+    identity: IdentityDiscovery,
+    statistics: dict[str, object],
+    unicode_pool: list[UnicodeGlyph],
+    catalogues: dict[str, set[tuple[int, ...]]],
+    structure_glyph: UnicodeGlyph,
+    operation_glyph: UnicodeGlyph,
+    symmetry_glyph: UnicodeGlyph,
+    identity_glyph: UnicodeGlyph,
+    include_shared_assets: bool = True,
+) -> None:
+    if ROOT.exists():
+        shutil.rmtree(ROOT)
+    ROOT.mkdir(parents=True)
+
+    lean = make_lean_source(
+        candidate,
+        identity,
+        structure_glyph,
+        operation_glyph,
+        symmetry_glyph,
+        identity_glyph,
+    )
+    report = build_report(
+        candidate,
+        identity,
+        statistics,
+        structure_glyph,
+        operation_glyph,
+        symmetry_glyph,
+        identity_glyph,
+    )
+
+    lakefile = """name = "hxc-novel-structure-inventor"
+version = "6.0.0"
+defaultTargets = ["HXCNovel"]
+
+[[lean_lib]]
+name = "HXCNovel"
+roots = ["HXCNovel"]
+"""
+
+    assigned = {
+        structure_glyph.symbol: "structure",
+        operation_glyph.symbol: "binary_operation",
+        symmetry_glyph.symbol: "automorphism",
+        identity_glyph.symbol: "discovered_identity",
+    }
+
+    unicode_registry = {
+        "unicode_database_version": unicodedata.unidata_version,
+        "code_points_scanned": sys.maxunicode + 1,
+        "accepted_symbols": len(unicode_pool),
+        "glyphs": [
+            {
+                **asdict(glyph),
+                "assigned": glyph.symbol in assigned,
+                "role": assigned.get(glyph.symbol),
+            }
+            for glyph in unicode_pool
+        ],
+    }
+
+    record = {
+        "order": ORDER,
+        "seed": SEED,
+        "samples": SAMPLES,
+        "glyphs": {
+            "structure": asdict(structure_glyph),
+            "operation": asdict(operation_glyph),
+            "symmetry": asdict(symmetry_glyph),
+            "identity": asdict(identity_glyph),
+        },
+        "search_statistics": statistics,
+        "candidate": {
+            "table": candidate.table,
+            "canonical_form": candidate.canonical,
+            "properties": candidate.properties,
+            "classifications": candidate.classifications,
+            "metrics": candidate.metrics,
+            "fingerprint": candidate.fingerprint,
+            "entropy": candidate.entropy,
+            "interesting_law_count": candidate.interesting_law_count,
+            "sample_index": candidate.sample_index,
+            "score": candidate.score,
+            "exploration_fingerprint_frequency": (
+                candidate.exploration_fingerprint_frequency
+            ),
+            "catalogue_memberships": candidate.catalogue_memberships,
+            "novelty_label": candidate.novelty_label,
+            "historical_novelty_verified": False,
+        },
+        "discovered_identity": {
+            "display": identity.display,
+            "canonical_code": identity.canonical_code,
+            "variables": identity.variables,
+            "lhs_code": term_code(identity.lhs),
+            "rhs_code": term_code(identity.rhs),
+            "terms_searched": identity.target_term_count,
+            "candidate_pairs": identity.candidate_pair_count,
+            "comparison_models_satisfied": identity.model_bank_satisfied,
+            "comparison_models_total": identity.model_bank_total,
+            "comparison_bank_failure_rate": (
+                identity.model_bank_failure_rate
+            ),
+            "countermodel_source": identity.countermodel_source,
+            "countermodel_table": identity.countermodel_table,
+            "counterexample_assignment": (
+                identity.counterexample_assignment
+            ),
+            "score": identity.score,
+            "historical_novelty_verified": False,
+        },
+        "reference_library": list(reference_library()),
+    }
+
+    catalogue_manifest = {
+        "order": ORDER,
+        "complete": statistics.get("catalogue_complete"),
+        "scope": statistics.get("catalogue_scope"),
+        "counts": statistics.get("catalogue_counts"),
+        "hashes": statistics.get("catalogue_hashes"),
+        "historical_novelty_verified": False,
+    }
+
+    files = {
+        "HXCNovel.lean": lean,
+        "StdPreflight.lean": (
+            'import Std\n\n'
+            'def main : IO Unit :=\n'
+            '  IO.println "Std preflight: PASSED"\n'
+        ),
+        "lakefile.toml": lakefile,
+        "lean-toolchain": TOOLCHAIN + "\n",
+        "NOVEL_STRUCTURE_REPORT.md": report,
+        "novel_structure.json": json.dumps(
+            record,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        "catalogue_manifest.json": json.dumps(
+            catalogue_manifest,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        "identity_discovery.json": json.dumps(
+            record["discovered_identity"],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        "cycle_unicode.json": json.dumps(
+            {
+                "structure": asdict(structure_glyph),
+                "operation": asdict(operation_glyph),
+                "symmetry": asdict(symmetry_glyph),
+                "identity": asdict(identity_glyph),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+    }
+
+    if include_shared_assets:
+        files["unicode_glyph_registry.json"] = json.dumps(
+            unicode_registry,
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n"
+
+    if include_shared_assets:
+        for name, catalogue in catalogues.items():
+            files[f"catalogues/{name}_order_{ORDER}.json"] = json.dumps(
+                {
+                    "name": name,
+                    "order": ORDER,
+                    "count": len(catalogue),
+                    "sha256": catalogue_sha256(catalogue),
+                    "canonical_tables": [
+                        list(entry)
+                        for entry in sorted(catalogue)
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n"
+
+    banner("HXC STRUCTURE + THEOREM INVENTION PROJECT")
+    for relative, content in files.items():
+        path = ROOT / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        raw = content.encode("utf-8")
+        print(
+            f"{relative:<30} bytes={len(raw):>9} "
+            f"lines={content.count(chr(10)):>5} "
+            f"sha256={hashlib.sha256(raw).hexdigest()}",
+            flush=True,
+        )
+
+
+def audit() -> None:
+    source = (ROOT / "HXCNovel.lean").read_text(encoding="utf-8")
+    patterns = (
+        re.compile(r"\bsorry\b"),
+        re.compile(r"\badmit\b"),
+        re.compile(r"^\s*axiom\b", re.MULTILINE),
+        re.compile(r"\bunsafe\b"),
+    )
+    violations = []
+    for pattern in patterns:
+        match = pattern.search(source)
+        if match is not None:
+            violations.append(match.group(0))
+
+    if violations:
+        raise RuntimeError(
+            "Proof-placeholder audit failed: " + ", ".join(violations)
+        )
+
+    # Lean block comments may be nested. Scan the source exactly as a small
+    # delimiter stack so malformed generated documentation cannot reach Lake.
+    comment_stack: list[tuple[int, int]] = []
+    index = 0
+    line = 1
+    column = 1
+
+    while index < len(source) - 1:
+        pair = source[index:index + 2]
+
+        if pair == "/-":
+            comment_stack.append((line, column))
+            index += 2
+            column += 2
+            continue
+
+        if pair == "-/":
+            if not comment_stack:
+                raise RuntimeError(
+                    f"Lean comment audit failed: unmatched `-/` at "
+                    f"line {line}, column {column}."
+                )
+            comment_stack.pop()
+            index += 2
+            column += 2
+            continue
+
+        if source[index] == "\n":
+            line += 1
+            column = 1
+        else:
+            column += 1
+        index += 1
+
+    if comment_stack:
+        locations = ", ".join(
+            f"line {open_line}, column {open_column}"
+            for open_line, open_column in comment_stack
+        )
+        raise RuntimeError(
+            "Lean comment audit failed: unterminated block comment opened at "
+            + locations
+        )
+
+    if "-*/" in source or "/*-" in source:
+        raise RuntimeError(
+            "Lean comment audit failed: C-style hybrid comment delimiter found."
+        )
+
+    banner("SOURCE AUDIT: PASSED")
+    print(
+        "No proof placeholders, local axioms, unsafe declarations, or "
+        "unbalanced Lean comments detected.",
+        flush=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lean installation and build
+# ---------------------------------------------------------------------------
+
+def lean_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = (
+        str(Path.home() / ".elan" / "bin")
+        + os.pathsep
+        + env.get("PATH", "")
+    )
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
+def install_or_reuse_lean() -> dict[str, str]:
+    env = lean_environment()
+
+    run(["apt-get", "update", "-qq"], env=env)
+    run(
+        [
+            "apt-get",
+            "install",
+            "-y",
+            "-qq",
+            "ca-certificates",
+            "curl",
+            "git",
+            "zstd",
+        ],
+        env=env,
+    )
+
+    if shutil.which("elan", path=env["PATH"]) is None:
+        installer = Path("/tmp/elan-init.sh")
+        run(
+            [
+                "curl",
+                "-sSf",
+                "https://elan.lean-lang.org/elan-init.sh",
+                "-o",
+                str(installer),
+            ],
+            env=env,
+        )
+        run(
+            ["sh", str(installer), "-y", "--default-toolchain", "none"],
+            env=env,
+        )
+
+    run(["elan", "--version"], env=env)
+    run(
+        ["elan", "toolchain", "install", TOOLCHAIN],
+        env=env,
+        accepted_failure_text=("already installed", "is already installed"),
+    )
+
+    env["ELAN_TOOLCHAIN"] = TOOLCHAIN
+    run(["elan", "toolchain", "list"], env=env)
+    run(["lean", "--version"], env=env)
+    run(["lake", "--version"], env=env)
+    return env
+
+
+def build(env: dict[str, str]) -> None:
+    stale = ROOT / ".lake"
+    if stale.exists():
+        shutil.rmtree(stale)
+
+    run(["lean", "--run", "StdPreflight.lean"], cwd=ROOT, env=env)
+    run(["lake", "env", "lean", "HXCNovel.lean"], cwd=ROOT, env=env)
+    run(["lake", "build"], cwd=ROOT, env=env)
+
+
+# ---------------------------------------------------------------------------
+# Main autonomous loop
+# ---------------------------------------------------------------------------
+
+def cycle_directory(cycle_number: int) -> Path:
+    return RUN_ROOT / f"cycle_{cycle_number:03d}"
+
+
+def cycle_status_path(cycle_number: int) -> Path:
+    return cycle_directory(cycle_number) / "cycle_status.json"
+
+
+def write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def load_existing_run_state() -> tuple[
+    set[int],
+    set[str],
+    set[tuple[int, ...]],
+    set[str],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
+    completed_cycles: set[int] = set()
+    used_symbols = set(RESERVED_GLYPHS)
+    used_canonical: set[tuple[int, ...]] = set()
+    used_identity_codes: set[str] = set()
+    summaries: list[dict[str, object]] = []
+    assignments: list[dict[str, object]] = []
+
+    if not RESUME_RUN or not RUN_ROOT.exists():
+        return (
+            completed_cycles,
+            used_symbols,
+            used_canonical,
+            used_identity_codes,
+            summaries,
+            assignments,
+        )
+
+    for cycle_path in sorted(RUN_ROOT.glob("cycle_[0-9][0-9][0-9]")):
+        status_path = cycle_path / "cycle_status.json"
+        record_path = cycle_path / "novel_structure.json"
+        if not status_path.exists() or not record_path.exists():
+            continue
+
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        if status.get("status") not in {"verified", "generated"}:
+            continue
+
+        cycle_number = int(status["cycle"])
+        completed_cycles.add(cycle_number)
+
+        canonical = tuple(
+            int(value)
+            for value in record["candidate"]["canonical_form"]
+        )
+        used_canonical.add(canonical)
+        used_identity_codes.add(
+            str(record["discovered_identity"]["canonical_code"])
+        )
+
+        for role, glyph in record["glyphs"].items():
+            symbol = str(glyph["symbol"])
+            used_symbols.add(symbol)
+            assignments.append(
+                {
+                    "cycle": cycle_number,
+                    "role": role,
+                    **glyph,
+                }
+            )
+
+        summaries.append(
+            {
+                "cycle": cycle_number,
+                "seed": record["seed"],
+                "status": status["status"],
+                "glyphs": record["glyphs"],
+                "classifications": record["candidate"]["classifications"],
+                "positive_laws": [
+                    key
+                    for key, value in record["candidate"]["properties"].items()
+                    if key in LAW_KEYS and bool(value)
+                ],
+                "operation_table": record["candidate"]["table"],
+                "identity": record["discovered_identity"],
+                "cycle_directory": str(cycle_path),
+            }
+        )
+
+    return (
+        completed_cycles,
+        used_symbols,
+        used_canonical,
+        used_identity_codes,
+        summaries,
+        assignments,
+    )
+
+
+def write_shared_assets(
+    unicode_pool: list[UnicodeGlyph],
+    catalogues: dict[str, set[tuple[int, ...]]],
+    catalogue_metadata: dict[str, object],
+    assignments: list[dict[str, object]],
+) -> None:
+    shared = RUN_ROOT / "shared"
+    shared.mkdir(parents=True, exist_ok=True)
+
+    assignment_map = {
+        item["symbol"]: {
+            "cycle": item["cycle"],
+            "role": item["role"],
+        }
+        for item in assignments
+    }
+
+    unicode_registry = {
+        "unicode_database_version": unicodedata.unidata_version,
+        "code_points_scanned": sys.maxunicode + 1,
+        "accepted_symbols": len(unicode_pool),
+        "assignments": assignments,
+        "glyphs": [
+            {
+                **asdict(glyph),
+                "assigned": glyph.symbol in assignment_map,
+                "assignment": assignment_map.get(glyph.symbol),
+            }
+            for glyph in unicode_pool
+        ],
+    }
+    write_json(shared / "unicode_glyph_registry.json", unicode_registry)
+
+    manifest = {
+        "order": ORDER,
+        "complete": catalogue_metadata.get("complete"),
+        "scope": catalogue_metadata.get("scope"),
+        "counts": catalogue_metadata.get("counts"),
+        "hashes": catalogue_metadata.get("hashes"),
+        "historical_novelty_verified": False,
+    }
+    write_json(shared / "catalogue_manifest.json", manifest)
+
+    catalogue_root = shared / "catalogues"
+    catalogue_root.mkdir(parents=True, exist_ok=True)
+    for name, catalogue in catalogues.items():
+        write_json(
+            catalogue_root / f"{name}_order_{ORDER}.json",
+            {
+                "name": name,
+                "order": ORDER,
+                "count": len(catalogue),
+                "sha256": catalogue_sha256(catalogue),
+                "canonical_tables": [
+                    list(entry)
+                    for entry in sorted(catalogue)
+                ],
+            },
+        )
+
+
+def extract_lean_declaration(source: str, name: str) -> str:
+    lines = source.splitlines()
+    start_index = None
+    declaration_pattern = re.compile(
+        rf"^(?:theorem|def|structure)\s+{re.escape(name)}\b"
+    )
+    next_declaration = re.compile(
+        r"^(?:theorem|def|structure|inductive|abbrev|#check|#eval|end\s)"
+    )
+
+    for index, line in enumerate(lines):
+        if declaration_pattern.match(line):
+            start_index = index
+            break
+
+    if start_index is None:
+        return f"-- declaration `{name}` not found"
+
+    end_index = len(lines)
+    for index in range(start_index + 1, len(lines)):
+        if next_declaration.match(lines[index]):
+            end_index = index
+            break
+
+    return "\n".join(lines[start_index:end_index]).rstrip()
+
+
+def print_cycle_math_and_proofs(
+    cycle_number: int,
+    candidate: StructureCandidate,
+    identity: IdentityDiscovery,
+    glyphs: dict[str, UnicodeGlyph],
+    cycle_root: Path,
+) -> str:
+    lines: list[str] = []
+
+    lines.append("=" * 104)
+    lines.append(f"CYCLE {cycle_number:03d} — UNICODE + MATHEMATICS + LEAN PROOFS")
+    lines.append("=" * 104)
+
+    for role in ("structure", "operation", "symmetry", "identity"):
+        glyph = glyphs[role]
+        lines.append(
+            f"{role.upper():<10} {glyph.symbol}  "
+            f"{glyph.codepoint}  {glyph.name}  [{glyph.category}]"
+        )
+
+    lines.append("")
+    lines.append("OPERATION TABLE")
+    for row in candidate.table:
+        lines.append("  " + " ".join(str(value) for value in row))
+
+    positive_laws = [
+        key
+        for key in LAW_KEYS
+        if bool(candidate.properties[key])
+    ]
+    lines.append("")
+    lines.append("POSITIVE LAWS")
+    lines.append("  " + ", ".join(positive_laws))
+    lines.append("")
+    lines.append("DISCOVERED IDENTITY")
+    lines.append(f"  {identity.display}")
+    lines.append(
+        "  comparison failures: "
+        f"{identity.model_bank_total - identity.model_bank_satisfied}/"
+        f"{identity.model_bank_total}"
+    )
+    lines.append(f"  countermodel: {identity.countermodel_source}")
+    lines.append(
+        "  assignment: "
+        + str(
+            dict(
+                zip(
+                    IDENTITY_VARIABLES,
+                    identity.counterexample_assignment,
+                    strict=True,
+                )
+            )
+        )
+    )
+
+    lean_source = (cycle_root / "HXCNovel.lean").read_text(encoding="utf-8")
+    proof_names = (
+        "every_row_depends_on_right_argument",
+        "every_column_depends_on_left_argument",
+        "alien_not_left_shelf",
+        "alien_not_right_shelf",
+        "alien_not_quasigroup",
+        "discovered_identity_not_in_seed_library",
+        "discovered_symbolic_identity",
+        "discovered_identity_has_countermodel",
+        "alien_not_isomorphic_to_modular_addition",
+        "alien_not_isomorphic_to_modular_multiplication",
+        "identityDiscoveryCertificate",
+        "noveltyCertificate",
+    )
+
+    lines.append("")
+    lines.append("LEAN PROOF OUTPUT")
+    if PRINT_FULL_LEAN:
+        lines.append(lean_source)
+    else:
+        for proof_name in proof_names:
+            lines.append("")
+            lines.append(extract_lean_declaration(lean_source, proof_name))
+
+    output = "\n".join(lines) + "\n"
+    if PRINT_PROOFS:
+        print(output, flush=True)
+
+    return output
+
+
+def update_aggregate_outputs(
+    summaries: list[dict[str, object]],
+    proof_outputs: list[str],
+    failures: list[dict[str, object]],
+    catalogue_metadata: dict[str, object],
+) -> None:
+    ordered = sorted(summaries, key=lambda item: int(item["cycle"]))
+
+    manifest = {
+        "version": 7,
+        "requested_cycles": CYCLES,
+        "completed_cycles": len(ordered),
+        "failed_cycles": len(failures),
+        "base_seed": BASE_SEED,
+        "samples_per_cycle": SAMPLES,
+        "identity_term_budget": IDENTITY_TERM_BUDGET,
+        "identity_model_limit": IDENTITY_MODEL_LIMIT,
+        "verify_each_cycle": VERIFY_EACH_CYCLE and not GENERATE_ONLY,
+        "catalogue_metadata": catalogue_metadata,
+        "historical_novelty_verified": False,
+        "cycles": ordered,
+        "failures": failures,
+    }
+    write_json(RUN_ROOT / "run_manifest.json", manifest)
+
+    write_json(
+        RUN_ROOT / "ALL_IDENTITIES.json",
+        [
+            {
+                "cycle": item["cycle"],
+                "seed": item["seed"],
+                "identity": item["identity"],
+                "identity_glyph": item["glyphs"]["identity"],
+                "operation_glyph": item["glyphs"]["operation"],
+            }
+            for item in ordered
+        ],
+    )
+
+    markdown: list[str] = [
+        "# HXC 100-Cycle Structure + Theorem Discovery Run",
+        "",
+        f"- Requested cycles: `{CYCLES}`",
+        f"- Completed cycles: `{len(ordered)}`",
+        f"- Failed cycles: `{len(failures)}`",
+        f"- Order: `{ORDER}`",
+        f"- Samples per cycle: `{SAMPLES:,}`",
+        "- Historical novelty: `unverified`",
+        "",
+    ]
+
+    for item in ordered:
+        glyphs = item["glyphs"]
+        markdown.extend(
+            [
+                f"## Cycle {int(item['cycle']):03d}",
+                "",
+                f"- Seed: `{item['seed']}`",
+                f"- Status: `{item['status']}`",
+                (
+                    f"- Unicode: structure `{glyphs['structure']['symbol']}`, "
+                    f"operation `{glyphs['operation']['symbol']}`, "
+                    f"symmetry `{glyphs['symmetry']['symbol']}`, "
+                    f"identity `{glyphs['identity']['symbol']}`"
+                ),
+                (
+                    "- Classification: "
+                    + ", ".join(item["classifications"])
+                ),
+                (
+                    "- Positive laws: "
+                    + ", ".join(item["positive_laws"])
+                ),
+                "",
+                "### Operation table",
+                "",
+                "```text",
+                *[
+                    " ".join(str(value) for value in row)
+                    for row in item["operation_table"]
+                ],
+                "```",
+                "",
+                "### Discovered identity",
+                "",
+                f"`{item['identity']['display']}`",
+                "",
+                (
+                    "- Comparison failures: "
+                    f"{item['identity']['comparison_models_total'] - item['identity']['comparison_models_satisfied']}/"
+                    f"{item['identity']['comparison_models_total']}"
+                ),
+                (
+                    "- Countermodel: "
+                    f"`{item['identity']['countermodel_source']}`"
+                ),
+                "",
+            ]
+        )
+
+    (RUN_ROOT / "ALL_DISCOVERIES.md").write_text(
+        "\n".join(markdown) + "\n",
+        encoding="utf-8",
+    )
+    (RUN_ROOT / "ALL_LEAN_PROOFS.txt").write_text(
+        "\n".join(proof_outputs),
+        encoding="utf-8",
+    )
+
+
+def package_run_results() -> Path:
+    archive_path = RUN_ROOT.parent / f"{RUN_ROOT.name}.zip"
+    if archive_path.exists():
+        archive_path.unlink()
+
+    with zipfile.ZipFile(
+        archive_path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as archive:
+        for path in sorted(RUN_ROOT.rglob("*")):
+            if path.is_file():
+                archive.write(path, path.relative_to(RUN_ROOT.parent))
+
+    return archive_path
+
+
+def summary_from_record(
+    cycle_number: int,
+    status: str,
+    cycle_root: Path,
+) -> dict[str, object]:
+    record = json.loads(
+        (cycle_root / "novel_structure.json").read_text(encoding="utf-8")
+    )
+    return {
+        "cycle": cycle_number,
+        "seed": record["seed"],
+        "status": status,
+        "glyphs": record["glyphs"],
+        "classifications": record["candidate"]["classifications"],
+        "positive_laws": [
+            key
+            for key, value in record["candidate"]["properties"].items()
+            if key in LAW_KEYS and bool(value)
+        ],
+        "operation_table": record["candidate"]["table"],
+        "identity": record["discovered_identity"],
+        "cycle_directory": str(cycle_root),
+    }
+
+
+def main() -> None:
+    global ROOT, SEED
+
+    banner("HXC 100-CYCLE NOVEL STRUCTURE + THEOREM INVENTOR V7")
+    print(f"Cycles requested:       {CYCLES}", flush=True)
+    print(f"Order:                  {ORDER}", flush=True)
+    print(f"Base seed:              {BASE_SEED}", flush=True)
+    print(f"Samples per cycle:      {SAMPLES:,}", flush=True)
+    print(f"Identity terms/cycle:   {IDENTITY_TERM_BUDGET:,}", flush=True)
+    print(f"Comparison models:      {IDENTITY_MODEL_LIMIT:,}", flush=True)
+    print(f"Verify every cycle:     {VERIFY_EACH_CYCLE and not GENERATE_ONLY}", flush=True)
+    print(f"Resume enabled:         {RESUME_RUN}", flush=True)
+    print(f"Run root:               {RUN_ROOT}", flush=True)
+
+    if RUN_ROOT.exists() and not RESUME_RUN:
+        shutil.rmtree(RUN_ROOT)
+    RUN_ROOT.mkdir(parents=True, exist_ok=True)
+
+    (
+        completed_cycles,
+        used_symbols,
+        used_canonical,
+        used_identity_codes,
+        summaries,
+        assignments,
+    ) = load_existing_run_state()
+
+    banner("SHARED PHASE A — FILTERED UNICODE REGISTRY")
+    unicode_pool = build_unicode_glyph_pool()
+    category_counts = {
+        category: sum(glyph.category == category for glyph in unicode_pool)
+        for category in sorted(UNICODE_SYMBOL_CATEGORIES)
+    }
+    print(f"Unicode database:       {unicodedata.unidata_version}", flush=True)
+    print(f"Code points scanned:    {sys.maxunicode + 1:,}", flush=True)
+    print(f"Usable symbols:         {len(unicode_pool):,}", flush=True)
+    print(f"Category counts:        {category_counts}", flush=True)
+
+    banner("SHARED PHASE B — COMPLETE SMALL-ORDER CATALOGUES")
+    catalogues, catalogue_metadata = build_complete_catalogues()
+    print(
+        f"Catalogue completeness: {catalogue_metadata['complete']}",
+        flush=True,
+    )
+    for name in sorted(catalogue_metadata["counts"]):
+        print(
+            f"{name:<22} "
+            f"classes={catalogue_metadata['counts'][name]:>5} "
+            f"sha256={catalogue_metadata['hashes'][name]}",
+            flush=True,
+        )
+
+    write_shared_assets(
+        unicode_pool,
+        catalogues,
+        catalogue_metadata,
+        assignments,
+    )
+
+    lean_env = None
+    if not GENERATE_ONLY and VERIFY_EACH_CYCLE:
+        banner("SHARED PHASE C — INSTALL OR REUSE LEAN")
+        lean_env = install_or_reuse_lean()
+
+    proof_outputs: list[str] = []
+    failures: list[dict[str, object]] = []
+
+    # Reload proof outputs for resumed cycles so the aggregate remains complete.
+    for cycle_number in sorted(completed_cycles):
+        proof_path = cycle_directory(cycle_number) / "LEAN_PROOF_OUTPUT.txt"
+        if proof_path.exists():
+            proof_outputs.append(proof_path.read_text(encoding="utf-8"))
+
+    for cycle_number in range(1, CYCLES + 1):
+        if cycle_number in completed_cycles:
+            banner(f"CYCLE {cycle_number:03d}/{CYCLES:03d} — RESUMED/SKIPPED")
+            print(
+                f"Existing successful output: {cycle_directory(cycle_number)}",
+                flush=True,
+            )
+            continue
+
+        success = False
+        last_error = ""
+
+        for attempt in range(1, MAX_CYCLE_RETRIES + 1):
+            cycle_seed = (
+                BASE_SEED
+                + cycle_number
+                - 1
+                + (attempt - 1) * CYCLE_SEED_STRIDE
+            )
+            SEED = cycle_seed
+            ROOT = cycle_directory(cycle_number)
+
+            if ROOT.exists():
+                shutil.rmtree(ROOT)
+
+            trial_used_symbols = set(used_symbols)
+            rng = random.Random(cycle_seed)
+
+            banner(
+                f"CYCLE {cycle_number:03d}/{CYCLES:03d} "
+                f"— ATTEMPT {attempt}/{MAX_CYCLE_RETRIES} "
+                f"— SEED {cycle_seed}"
+            )
+
+            try:
+                structure_glyph = select_fresh_glyph(
+                    unicode_pool,
+                    rng,
+                    trial_used_symbols,
+                    ("So", "Sm", "Sk", "Sc"),
+                )
+                operation_glyph = select_fresh_glyph(
+                    unicode_pool,
+                    rng,
+                    trial_used_symbols,
+                    ("Sm", "So", "Sk", "Sc"),
+                )
+                symmetry_glyph = select_fresh_glyph(
+                    unicode_pool,
+                    rng,
+                    trial_used_symbols,
+                    ("So", "Sm", "Sk", "Sc"),
+                )
+                identity_glyph = select_fresh_glyph(
+                    unicode_pool,
+                    rng,
+                    trial_used_symbols,
+                    ("Sm", "So", "Sk", "Sc"),
+                )
+
+                candidate, statistics = search_novel_structure(
+                    rng,
+                    catalogues,
+                    catalogue_metadata,
+                    excluded_canonical=used_canonical,
+                )
+
+                identity = discover_symbolic_identity(
+                    candidate,
+                    catalogues,
+                    rng,
+                    operation_glyph,
+                    excluded_identity_codes=used_identity_codes,
+                )
+
+                print(
+                    f"Unicode: {structure_glyph.symbol} "
+                    f"{operation_glyph.symbol} {symmetry_glyph.symbol} "
+                    f"{identity_glyph.symbol}",
+                    flush=True,
+                )
+                print(
+                    "Glyph metadata:",
+                    flush=True,
+                )
+                for role, glyph in (
+                    ("structure", structure_glyph),
+                    ("operation", operation_glyph),
+                    ("symmetry", symmetry_glyph),
+                    ("identity", identity_glyph),
+                ):
+                    print(
+                        f"  {role:<10} {glyph.symbol} "
+                        f"{glyph.codepoint} {glyph.name} "
+                        f"[{glyph.category}]",
+                        flush=True,
+                    )
+
+                print("Operation table:", flush=True)
+                for row in candidate.table:
+                    print("  " + " ".join(map(str, row)), flush=True)
+
+                print(
+                    "Positive laws: "
+                    + ", ".join(
+                        key
+                        for key in LAW_KEYS
+                        if bool(candidate.properties[key])
+                    ),
+                    flush=True,
+                )
+                print(f"Discovered identity: {identity.display}", flush=True)
+                print(
+                    "Comparison failures: "
+                    f"{identity.model_bank_total - identity.model_bank_satisfied}/"
+                    f"{identity.model_bank_total}",
+                    flush=True,
+                )
+                print(
+                    f"Countermodel: {identity.countermodel_source}",
+                    flush=True,
+                )
+
+                write_project(
+                    candidate,
+                    identity,
+                    statistics,
+                    unicode_pool,
+                    catalogues,
+                    structure_glyph,
+                    operation_glyph,
+                    symmetry_glyph,
+                    identity_glyph,
+                    include_shared_assets=False,
+                )
+                audit()
+
+                status = "generated"
+                if not GENERATE_ONLY and VERIFY_EACH_CYCLE:
+                    assert lean_env is not None
+                    build(lean_env)
+                    status = "verified"
+
+                glyph_map = {
+                    "structure": structure_glyph,
+                    "operation": operation_glyph,
+                    "symmetry": symmetry_glyph,
+                    "identity": identity_glyph,
+                }
+                proof_output = print_cycle_math_and_proofs(
+                    cycle_number,
+                    candidate,
+                    identity,
+                    glyph_map,
+                    ROOT,
+                )
+                (ROOT / "LEAN_PROOF_OUTPUT.txt").write_text(
+                    proof_output,
+                    encoding="utf-8",
+                )
+
+                cycle_status = {
+                    "cycle": cycle_number,
+                    "attempt": attempt,
+                    "seed": cycle_seed,
+                    "status": status,
+                    "verified": status == "verified",
+                    "structure_canonical_sha256": hashlib.sha256(
+                        json.dumps(
+                            list(candidate.canonical),
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                    "identity_code": identity.canonical_code,
+                    "identity_code_sha256": hashlib.sha256(
+                        identity.canonical_code.encode("utf-8")
+                    ).hexdigest(),
+                    "historical_novelty_verified": False,
+                }
+                write_json(ROOT / "cycle_status.json", cycle_status)
+
+                used_symbols = trial_used_symbols
+                used_canonical.add(candidate.canonical)
+                used_identity_codes.add(identity.canonical_code)
+                completed_cycles.add(cycle_number)
+                proof_outputs.append(proof_output)
+
+                for role, glyph in glyph_map.items():
+                    assignments.append(
+                        {
+                            "cycle": cycle_number,
+                            "role": role,
+                            **asdict(glyph),
+                        }
+                    )
+
+                summary = summary_from_record(
+                    cycle_number,
+                    status,
+                    ROOT,
+                )
+                summaries = [
+                    item
+                    for item in summaries
+                    if int(item["cycle"]) != cycle_number
+                ]
+                summaries.append(summary)
+
+                write_shared_assets(
+                    unicode_pool,
+                    catalogues,
+                    catalogue_metadata,
+                    assignments,
+                )
+                update_aggregate_outputs(
+                    summaries,
+                    proof_outputs,
+                    failures,
+                    catalogue_metadata,
+                )
+
+                banner(
+                    f"CYCLE {cycle_number:03d}/{CYCLES:03d} "
+                    f"— {status.upper()}"
+                )
+                print(
+                    f"Saved: {ROOT}",
+                    flush=True,
+                )
+                success = True
+                break
+
+            except Exception as error:
+                last_error = f"{type(error).__name__}: {error}"
+                banner(
+                    f"CYCLE {cycle_number:03d} ATTEMPT {attempt} FAILED"
+                )
+                print(last_error, flush=True)
+                write_json(
+                    ROOT / "cycle_status.json",
+                    {
+                        "cycle": cycle_number,
+                        "attempt": attempt,
+                        "seed": cycle_seed,
+                        "status": "failed_attempt",
+                        "error": last_error,
+                    },
+                )
+
+        if not success:
+            failure = {
+                "cycle": cycle_number,
+                "status": "failed",
+                "attempts": MAX_CYCLE_RETRIES,
+                "last_error": last_error,
+            }
+            failures.append(failure)
+            update_aggregate_outputs(
+                summaries,
+                proof_outputs,
+                failures,
+                catalogue_metadata,
+            )
+            banner(f"CYCLE {cycle_number:03d} — FAILED AFTER RETRIES")
+            print(last_error, flush=True)
+
+    update_aggregate_outputs(
+        summaries,
+        proof_outputs,
+        failures,
+        catalogue_metadata,
+    )
+    write_shared_assets(
+        unicode_pool,
+        catalogues,
+        catalogue_metadata,
+        assignments,
+    )
+
+    archive_path = None
+    if PACKAGE_RESULTS:
+        banner("PACKAGING COMPLETE RUN")
+        archive_path = package_run_results()
+        print(f"Archive: {archive_path}", flush=True)
+
+    successful_count = len(
+        {
+            int(item["cycle"])
+            for item in summaries
+            if int(item["cycle"]) <= CYCLES
+        }
+    )
+
+    banner("HXC 100-CYCLE RUN COMPLETE")
+    print(f"Requested cycles:  {CYCLES}", flush=True)
+    print(f"Successful cycles: {successful_count}", flush=True)
+    print(f"Failed cycles:     {len(failures)}", flush=True)
+    print(f"Run manifest:      {RUN_ROOT / 'run_manifest.json'}", flush=True)
+    print(f"Discoveries:       {RUN_ROOT / 'ALL_DISCOVERIES.md'}", flush=True)
+    print(f"All identities:    {RUN_ROOT / 'ALL_IDENTITIES.json'}", flush=True)
+    print(f"All Lean proofs:   {RUN_ROOT / 'ALL_LEAN_PROOFS.txt'}", flush=True)
+    if archive_path is not None:
+        print(f"Packaged archive:  {archive_path}", flush=True)
+
+    if REQUIRE_ALL_CYCLES and successful_count < CYCLES:
+        raise RuntimeError(
+            f"Only {successful_count}/{CYCLES} cycles completed successfully. "
+            "Re-run the same script with HXC_RESUME=1 to continue."
+        )
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+========================================================================================================
+HXC 100-CYCLE NOVEL STRUCTURE + THEOREM INVENTOR V7
+========================================================================================================
+Cycles requested:       100
+Order:                  4
+Base seed:              2026
+Samples per cycle:      25,000
+Identity terms/cycle:   7,000
+Comparison models:      480
+Verify every cycle:     True
+Resume enabled:         True
+Run root:               /content/HXC100CycleNovelMath
+
+========================================================================================================
+SHARED PHASE A — FILTERED UNICODE REGISTRY
+========================================================================================================
+Unicode database:       15.0.0
+Code points scanned:    1,114,112
+Usable symbols:         7,756
+Category counts:        {'Sc': 63, 'Sk': 119, 'Sm': 948, 'So': 6626}
+
+========================================================================================================
+SHARED PHASE B — COMPLETE SMALL-ORDER CATALOGUES
+========================================================================================================
+Catalogue completeness: True
+core_references        classes=    8 sha256=2114b4adf8a8bd1bfa27048cd882186f62f42ba52c062a7d0609cc3dd32e3cb5
+left_kei               classes=    5 sha256=acbb4f190932b684e10248a5567f4479038f62bab53a0d9b7d2a7ff078284c5b
+left_quandles          classes=    7 sha256=948dffe64118fbd2f8480122f3c486af68823b8b0091520dcb8f5141345deccc
+left_racks             classes=   19 sha256=c8b7132cd575d683d2c44bd9f6c8c134da8f6ee7ded4da5114e971b47f50161c
+left_shelves           classes=  720 sha256=1e0238303ede9c878b0c8aae3b55a1c7746850fa52e50314adc046e7b576c99f
+left_spindles          classes=  141 sha256=cec74b993c37275704800352dd22c82d534ae53efd4bd4d5fa5cd52e8942f8e7
+quasigroups            classes=   35 sha256=315b880c410446364cd87e3c9d6243573f244cdf49a899fe0f318e06dd3041f9
+right_kei              classes=    5 sha256=afc06c93a98332811775265038227f7f0c9bfcdafdd9636fe7f1e03b58097e9b
+right_quandles         classes=    7 sha256=7c03881384427cb5747134dc568cf7449757e78f21f49d970f103968d0f9054f
+right_racks            classes=   19 sha256=0190fba18b9ffad43b6d57085c5c2f96d9c57ba192445c7af457b1d701209e2f
+right_shelves          classes=  720 sha256=20c631c7b0779efbda8c9bd6cd3f4bfec831d62c8b2b82dfb3cd0265a3aaaf1b
+right_spindles         classes=  141 sha256=131128c4d298d57577421afe2e7eddc9e2ef3495b83a0bdcefe606a15fa7ced9
+
+========================================================================================================
+SHARED PHASE C — INSTALL OR REUSE LEAN
+========================================================================================================
+
+========================================================================================================
+$ apt-get update -qq
+========================================================================================================
+W: Skipping acquire of configured file 'main/source/Sources' as repository 'https://r2u.stat.illinois.edu/ubuntu jammy InRelease' does not seem to provide it (sources.list entry misspelt?)
+
+========================================================================================================
+$ apt-get install -y -qq ca-certificates curl git zstd
+========================================================================================================
+
+========================================================================================================
+$ elan --version
+========================================================================================================
+elan 4.2.3 (b6cec7e10 2026-06-08)
+
+========================================================================================================
+$ elan toolchain install leanprover/lean4:v4.33.0-rc1
+========================================================================================================
+error: 'leanprover/lean4:v4.33.0-rc1' is already installed
+Recognised harmless idempotent result; continuing.
+
+========================================================================================================
+$ elan toolchain list
+========================================================================================================
+leanprover/lean4:v4.33.0-rc1
+
+========================================================================================================
+$ lean --version
+========================================================================================================
+Lean (version 4.33.0-rc1, x86_64-unknown-linux-gnu, commit 62eed1db4d67327ec8120be05f1a1b0847d74561, Release)
+
+========================================================================================================
+$ lake --version
+========================================================================================================
+Lake version 5.0.0-src+62eed1d (Lean version 4.33.0-rc1)
+
+========================================================================================================
+CYCLE 001/100 — ATTEMPT 1/5 — SEED 2026
+========================================================================================================
+Unicode: ⚖ ⎬ 🀒 ⥽
+Glyph metadata:
+  structure  ⚖ U+2696 SCALES [So]
+  operation  ⎬ U+23AC RIGHT CURLY BRACKET MIDDLE PIECE [Sm]
+  symmetry   🀒 U+1F012 MAHJONG TILE THREE OF BAMBOOS [So]
+  identity   ⥽ U+297D RIGHT FISH TAIL [Sm]
+Operation table:
+  1 2 0 0
+  2 0 1 1
+  0 1 2 3
+  3 3 2 3
+Positive laws: left_alternative, right_alternative, surjective
+Discovered identity: ((y ⎬ (w ⎬ w)) ⎬ ((y ⎬ w) ⎬ (y ⎬ y))) = (((y ⎬ z) ⎬ (z ⎬ z)) ⎬ (y ⎬ (y ⎬ y)))
+Comparison failures: 437/480
+Countermodel: reference:modular_addition
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    22755 lines=  653 sha256=4b24153f648d6cedc52f2fc7639919dc8bb6177345b6e1f1c756fdc9f602fe43
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5228 lines=  155 sha256=4d552246ddab8b0883f197ec2d6d5e3b680b5ddc1266b116cf09dc07b417e8e8
+novel_structure.json           bytes=     6641 lines=  267 sha256=fa09990f040c3990b421a2c2318f17b5be63f9cf3b2b011d2486877ba780bbee
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=      980 lines=   51 sha256=5c808456bc084b9a7acd52f7860650a5f1c91951d55081071c7c0a0d896ebecb
+cycle_unicode.json             bytes=      513 lines=   26 sha256=7abb2c10f1e741bf50a1427f34e128e28fedd755f525b2c7cfb66fa6c6f54c25
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[1, 2, 0, 0], [2, 0, 1, 1], [0, 1, 2, 3], [3, 3, 2, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (y z w : Carrier) :
+  alienLaw (alienLaw y (alienLaw w w)) (alienLaw (alienLaw y w) (alienLaw y y)) =
+    alienLaw (alienLaw (alienLaw y z) (alienLaw z z)) (alienLaw y (alienLaw y y))
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 1) (mkCarrier 1)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 3) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 3))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (2.0s)
+info: HXCNovel.lean:632:0: [[1, 2, 0, 0], [2, 0, 1, 1], [0, 1, 2, 3], [3, 3, 2, 3]]
+info: HXCNovel.lean:633:0: [1, 0, 2, 3]
+info: HXCNovel.lean:635:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:636:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:637:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:638:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:639:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:640:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:641:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:642:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:643:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:644:0: HXCNovel.discovered_symbolic_identity (y z w : Carrier) :
+  alienLaw (alienLaw y (alienLaw w w)) (alienLaw (alienLaw y w) (alienLaw y y)) =
+    alienLaw (alienLaw (alienLaw y z) (alienLaw z z)) (alienLaw y (alienLaw y y))
+info: HXCNovel.lean:645:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 1) (mkCarrier 1)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+info: HXCNovel.lean:646:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:647:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:648:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:649:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 3) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 3))
+info: HXCNovel.lean:650:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:651:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 001 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  ⚖  U+2696  SCALES  [So]
+OPERATION  ⎬  U+23AC  RIGHT CURLY BRACKET MIDDLE PIECE  [Sm]
+SYMMETRY   🀒  U+1F012  MAHJONG TILE THREE OF BAMBOOS  [So]
+IDENTITY   ⥽  U+297D  RIGHT FISH TAIL  [Sm]
+
+OPERATION TABLE
+  1 2 0 0
+  2 0 1 1
+  0 1 2 3
+  3 3 2 3
+
+POSITIVE LAWS
+  left_alternative, right_alternative, surjective
+
+DISCOVERED IDENTITY
+  ((y ⎬ (w ⎬ w)) ⎬ ((y ⎬ w) ⎬ (y ⎬ y))) = (((y ⎬ z) ⎬ (z ⎬ z)) ⎬ (y ⎬ (y ⎬ y)))
+  comparison failures: 437/480
+  countermodel: reference:modular_addition
+  assignment: {'x': 0, 'y': 0, 'z': 0, 'w': 1}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (mkCarrier 0) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 0) (mkCarrier 2) =
+      alienLaw (mkCarrier 0) (mkCarrier 3) := by
+    decide
+  have equalInputs :
+      mkCarrier 2 = mkCarrier 3 :=
+    h.1.1
+      (mkCarrier 0)
+      (mkCarrier 2)
+      (mkCarrier 3)
+      sameOutput
+  have differentInputs :
+      mkCarrier 2 ≠ mkCarrier 3 := by
+    decide
+  exact differentInputs equalInputs
+
+
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ y z w : Carrier,
+      alienLaw (alienLaw (y) (alienLaw (w) (w))) (alienLaw (alienLaw (y) (w)) (alienLaw (y) (y))) =
+      alienLaw (alienLaw (alienLaw (y) (z)) (alienLaw (z) (z))) (alienLaw (y) (alienLaw (y) (y))) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 1) (mkCarrier 1))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 1)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⥽"
+  canonicalCode := discoveredIdentityCode
+  displayText := "((y \u23ac (w \u23ac w)) \u23ac ((y \u23ac w) \u23ac (y \u23ac y))) = (((y \u23ac z) \u23ac (z \u23ac z)) \u23ac (y \u23ac (y \u23ac y)))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 43
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "⚖"
+  operationGlyph := "⎬"
+  symmetryGlyph := "🀒"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["left_alternative", "right_alternative", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "fcd9fc45b645035ac97c1c953a270f1938d0e2071ba566c5a693de3be325051c"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+
+========================================================================================================
+CYCLE 001/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_001
+
+========================================================================================================
+CYCLE 002/100 — ATTEMPT 1/5 — SEED 2027
+========================================================================================================
+Unicode: ☽ ⥌ ╇ ⁻
+Glyph metadata:
+  structure  ☽ U+263D FIRST QUARTER MOON [So]
+  operation  ⥌ U+294C UP BARB RIGHT DOWN BARB LEFT HARPOON [Sm]
+  symmetry   ╇ U+2547 BOX DRAWINGS DOWN LIGHT AND UP HORIZONTAL HEAVY [So]
+  identity   ⁻ U+207B SUPERSCRIPT MINUS [Sm]
+Operation table:
+  1 3 2 0
+  3 0 2 1
+  2 2 2 3
+  0 1 3 3
+Positive laws: commutative, flexible, left_alternative, right_alternative, surjective
+Discovered identity: ((x ⥌ (z ⥌ x)) ⥌ (z ⥌ (w ⥌ y))) = (((y ⥌ w) ⥌ z) ⥌ (z ⥌ (x ⥌ x)))
+Comparison failures: 452/480
+Countermodel: reference:left_projection
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    22640 lines=  655 sha256=a06ae82d4ef367971cff7607b78259294df0feae9f7bec2c4a3080117166b02a
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5238 lines=  155 sha256=95b9bd7a93616ee3abd412d362dad4c214bf39b5e3c10a4d72e28a076cc2f788
+novel_structure.json           bytes=     6781 lines=  270 sha256=b85a6402b4c715dea41de0f31f7aebab032c69d9803b290197f6b614ec1d77dc
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=      944 lines=   52 sha256=4c9799c01c9caa5122a8f4e04884d0a73cfd407218828120706027f59222e27b
+cycle_unicode.json             bytes=      547 lines=   26 sha256=4e4dc046cbea44d0c7f6dfde3111a91488adf651d2062770010f94104faf1ba3
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[1, 3, 2, 0], [3, 0, 2, 1], [2, 2, 2, 3], [0, 1, 3, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw x (alienLaw z x)) (alienLaw z (alienLaw w y)) =
+    alienLaw (alienLaw (alienLaw y w) z) (alienLaw z (alienLaw x x))
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0)) (mkCarrier 0))
+      (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 2) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 2))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (3.4s)
+info: HXCNovel.lean:634:0: [[1, 3, 2, 0], [3, 0, 2, 1], [2, 2, 2, 3], [0, 1, 3, 3]]
+info: HXCNovel.lean:635:0: [1, 0, 2, 3]
+info: HXCNovel.lean:637:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:638:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:639:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:640:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:641:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:642:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:643:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:644:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:645:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:646:0: HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw x (alienLaw z x)) (alienLaw z (alienLaw w y)) =
+    alienLaw (alienLaw (alienLaw y w) z) (alienLaw z (alienLaw x x))
+info: HXCNovel.lean:647:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0)) (mkCarrier 0))
+      (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+info: HXCNovel.lean:648:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:649:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:650:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:651:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 2) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 2))
+info: HXCNovel.lean:652:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:653:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 002 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  ☽  U+263D  FIRST QUARTER MOON  [So]
+OPERATION  ⥌  U+294C  UP BARB RIGHT DOWN BARB LEFT HARPOON  [Sm]
+SYMMETRY   ╇  U+2547  BOX DRAWINGS DOWN LIGHT AND UP HORIZONTAL HEAVY  [So]
+IDENTITY   ⁻  U+207B  SUPERSCRIPT MINUS  [Sm]
+
+OPERATION TABLE
+  1 3 2 0
+  3 0 2 1
+  2 2 2 3
+  0 1 3 3
+
+POSITIVE LAWS
+  commutative, flexible, left_alternative, right_alternative, surjective
+
+DISCOVERED IDENTITY
+  ((x ⥌ (z ⥌ x)) ⥌ (z ⥌ (w ⥌ y))) = (((y ⥌ w) ⥌ z) ⥌ (z ⥌ (x ⥌ x)))
+  comparison failures: 452/480
+  countermodel: reference:left_projection
+  assignment: {'x': 0, 'y': 1, 'z': 0, 'w': 0}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (mkCarrier 0) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 2) (mkCarrier 0) =
+      alienLaw (mkCarrier 2) (mkCarrier 1) := by
+    decide
+  have equalInputs :
+      mkCarrier 0 = mkCarrier 1 :=
+    h.1.1
+      (mkCarrier 2)
+      (mkCarrier 0)
+      (mkCarrier 1)
+      sameOutput
+  have differentInputs :
+      mkCarrier 0 ≠ mkCarrier 1 := by
+    decide
+  exact differentInputs equalInputs
+
+
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw (x) (alienLaw (z) (x))) (alienLaw (z) (alienLaw (w) (y))) =
+      alienLaw (alienLaw (alienLaw (y) (w)) (z)) (alienLaw (z) (alienLaw (x) (x))) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 1))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 0)) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⁻"
+  canonicalCode := discoveredIdentityCode
+  displayText := "((x \u294c (z \u294c x)) \u294c (z \u294c (w \u294c y))) = (((y \u294c w) \u294c z) \u294c (z \u294c (x \u294c x)))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 28
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "☽"
+  operationGlyph := "⥌"
+  symmetryGlyph := "╇"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["commutative", "flexible", "left_alternative", "right_alternative", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "5a57c6b05161968412333716a293aa61672424b461a1a5e00827dad14ad7da3f"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+
+========================================================================================================
+CYCLE 002/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_002
+
+========================================================================================================
+CYCLE 003/100 — ATTEMPT 1/5 — SEED 2028
+========================================================================================================
+Unicode: 𜾓 ⫣ ⣮ ⩦
+Glyph metadata:
+  structure  𜾓 U+1CF93 ZNAMENNY NEUME STRELA MRACHNOTIKHAYA [So]
+  operation  ⫣ U+2AE3 DOUBLE VERTICAL BAR LEFT TURNSTILE [Sm]
+  symmetry   ⣮ U+28EE BRAILLE PATTERN DOTS-234678 [So]
+  identity   ⩦ U+2A66 EQUALS SIGN WITH DOT BELOW [Sm]
+Operation table:
+  1 3 2 0
+  3 0 2 1
+  0 1 2 2
+  0 1 3 3
+Positive laws: left_alternative, right_alternative, surjective
+Discovered identity: ((w ⫣ (w ⫣ w)) ⫣ ((y ⫣ y) ⫣ (y ⫣ x))) = (((w ⫣ w) ⫣ w) ⫣ ((z ⫣ z) ⫣ (z ⫣ x)))
+Comparison failures: 440/480
+Countermodel: reference:modular_addition
+
+========================================================================================================
+HXC STRUCTURE + THEOREM INVENTION PROJECT
+========================================================================================================
+HXCNovel.lean                  bytes=    22813 lines=  653 sha256=499b3d3feef7c6d4bd376c4cb88d7665fed7df36a94ee00a92ac4b9fa5b5b0f1
+StdPreflight.lean              bytes=       71 lines=    4 sha256=95cdb63599a0fa8a819ac156f655e7b4ea35e10c8c592360b3fb448357101fb8
+lakefile.toml                  bytes=      139 lines=    7 sha256=3ee54362cd30b45721848c30690369f1185128b2a49b7015e3c48834567817b1
+lean-toolchain                 bytes=       29 lines=    1 sha256=62c2d9c0fc1ec4c67e151c11eff41ca004ef38e179cf9476c230406e6defedef
+NOVEL_STRUCTURE_REPORT.md      bytes=     5273 lines=  155 sha256=00d32f2154aff222939497c887d9b5c2b3cf5822e1902a7ec1becbb35a3b86a1
+novel_structure.json           bytes=     6769 lines=  270 sha256=4d12e5a5f9c6d6d20493a80535b8c10ff266d1839974c40431e395ac0a2ed4cf
+catalogue_manifest.json        bytes=     1630 lines=   34 sha256=6bf2fb10a29c1172cbd56b5590c05712866b5feca413445f8ec0f85086cdcd6b
+identity_discovery.json        bytes=      986 lines=   52 sha256=34b14ec765a554604e998dd7acc063715e28dc2e385de79b2f51324781d6a474
+cycle_unicode.json             bytes=      554 lines=   26 sha256=79550ca79e938dde1a2eb39f2f3b48badd62630e25b956a2e287e069d3575ef8
+
+========================================================================================================
+SOURCE AUDIT: PASSED
+========================================================================================================
+No proof placeholders, local axioms, unsafe declarations, or unbalanced Lean comments detected.
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[1, 3, 2, 0], [3, 0, 2, 1], [0, 1, 2, 2], [0, 1, 3, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw w (alienLaw w w)) (alienLaw (alienLaw y y) (alienLaw y x)) =
+    alienLaw (alienLaw (alienLaw w w) w) (alienLaw (alienLaw z z) (alienLaw z x))
+HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 1) (mkCarrier 0)))
+HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 2) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 2))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (3.0s)
+info: HXCNovel.lean:632:0: [[1, 3, 2, 0], [3, 0, 2, 1], [0, 1, 2, 2], [0, 1, 3, 3]]
+info: HXCNovel.lean:633:0: [1, 0, 2, 3]
+info: HXCNovel.lean:635:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:636:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:637:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:638:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:639:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:640:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:641:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:642:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:643:0: HXCNovel.discovered_identity_not_in_seed_library : ¬discoveredIdentityCode ∈ seedIdentityCodes
+info: HXCNovel.lean:644:0: HXCNovel.discovered_symbolic_identity (x y z w : Carrier) :
+  alienLaw (alienLaw w (alienLaw w w)) (alienLaw (alienLaw y y) (alienLaw y x)) =
+    alienLaw (alienLaw (alienLaw w w) w) (alienLaw (alienLaw z z) (alienLaw z x))
+info: HXCNovel.lean:645:0: HXCNovel.discovered_identity_has_countermodel :
+  identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0)))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0))
+        (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0))
+      (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 1))
+        (identityCounterLaw (mkCarrier 1) (mkCarrier 0)))
+info: HXCNovel.lean:646:0: HXCNovel.identityDiscoveryCertificate : IdentityDiscoveryCertificate
+info: HXCNovel.lean:647:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:648:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:649:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 2) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 2))
+info: HXCNovel.lean:650:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:651:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+========================================================================================================
+CYCLE 003 — UNICODE + MATHEMATICS + LEAN PROOFS
+========================================================================================================
+STRUCTURE  𜾓  U+1CF93  ZNAMENNY NEUME STRELA MRACHNOTIKHAYA  [So]
+OPERATION  ⫣  U+2AE3  DOUBLE VERTICAL BAR LEFT TURNSTILE  [Sm]
+SYMMETRY   ⣮  U+28EE  BRAILLE PATTERN DOTS-234678  [So]
+IDENTITY   ⩦  U+2A66  EQUALS SIGN WITH DOT BELOW  [Sm]
+
+OPERATION TABLE
+  1 3 2 0
+  3 0 2 1
+  0 1 2 2
+  0 1 3 3
+
+POSITIVE LAWS
+  left_alternative, right_alternative, surjective
+
+DISCOVERED IDENTITY
+  ((w ⫣ (w ⫣ w)) ⫣ ((y ⫣ y) ⫣ (y ⫣ x))) = (((w ⫣ w) ⫣ w) ⫣ ((z ⫣ z) ⫣ (z ⫣ x)))
+  comparison failures: 440/480
+  countermodel: reference:modular_addition
+  assignment: {'x': 0, 'y': 0, 'z': 1, 'w': 0}
+
+LEAN PROOF OUTPUT
+
+theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (mkCarrier 0)
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier 0)
+      (mkCarrier 0)
+      (mkCarrier 0)
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (mkCarrier 0) ≠
+      alienLaw
+        (alienLaw (mkCarrier 0) (mkCarrier 0))
+        (alienLaw (mkCarrier 0) (mkCarrier 0)) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier 2) (mkCarrier 2) =
+      alienLaw (mkCarrier 2) (mkCarrier 3) := by
+    decide
+  have equalInputs :
+      mkCarrier 2 = mkCarrier 3 :=
+    h.1.1
+      (mkCarrier 2)
+      (mkCarrier 2)
+      (mkCarrier 3)
+      sameOutput
+  have differentInputs :
+      mkCarrier 2 ≠ mkCarrier 3 := by
+    decide
+  exact differentInputs equalInputs
+
+
+
+/-! ## Nontrivial symmetry -/
+
+theorem discovered_identity_not_in_seed_library :
+    discoveredIdentityCode ∉ seedIdentityCodes := by
+  decide
+
+theorem discovered_symbolic_identity :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw (w) (alienLaw (w) (w))) (alienLaw (alienLaw (y) (y)) (alienLaw (y) (x))) =
+      alienLaw (alienLaw (alienLaw (w) (w)) (w)) (alienLaw (alienLaw (z) (z)) (alienLaw (z) (x))) := by
+  decide
+
+theorem discovered_identity_has_countermodel :
+    identityCounterLaw (identityCounterLaw (mkCarrier 0) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (identityCounterLaw (mkCarrier 0) (mkCarrier 0))) ≠
+    identityCounterLaw (identityCounterLaw (identityCounterLaw (mkCarrier 0) (mkCarrier 0)) (mkCarrier 0)) (identityCounterLaw (identityCounterLaw (mkCarrier 1) (mkCarrier 1)) (identityCounterLaw (mkCarrier 1) (mkCarrier 0))) := by
+  decide
+
+theorem alien_not_isomorphic_to_modular_addition :
+    ¬ IsIsomorphic alienLaw modularAddition := by
+  change isomorphicBool alienLaw modularAddition ≠ true
+  decide
+
+theorem alien_not_isomorphic_to_modular_multiplication :
+    ¬ IsIsomorphic alienLaw modularMultiplication := by
+  change isomorphicBool alienLaw modularMultiplication ≠ true
+  decide
+
+def identityDiscoveryCertificate :
+    IdentityDiscoveryCertificate where
+  identityGlyph := "⩦"
+  canonicalCode := discoveredIdentityCode
+  displayText := "((w \u2ae3 (w \u2ae3 w)) \u2ae3 ((y \u2ae3 y) \u2ae3 (y \u2ae3 x))) = (((w \u2ae3 w) \u2ae3 w) \u2ae3 ((z \u2ae3 z) \u2ae3 (z \u2ae3 x)))"
+  notInSeedLibrary := discovered_identity_not_in_seed_library
+  holdsOnInventedStructure := discovered_symbolic_identity
+  failsOnIndependentCountermodel :=
+    discovered_identity_has_countermodel
+  comparisonModelsSatisfied := 40
+  comparisonModelsTotal := 480
+  historicalNoveltyVerified := false
+
+
+/-! ## Proof-carrying structure certificate -/
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "𜾓"
+  operationGlyph := "⫣"
+  symmetryGlyph := "⣮"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := ["left_alternative", "right_alternative", "surjective"]
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "outside_complete_generated_order_catalogues"
+  catalogueManifestHash := "466e0fc7d541b22224e01d4a569c50c04628178c4639d37f136ad41eda6e7d66"
+  historicalNoveltyVerified := false
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+
+========================================================================================================
+CYCLE 003/100 — VERIFIED
+========================================================================================================
+Saved: /content/HXC100CycleNovelMath/cycle_003
+
