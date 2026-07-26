@@ -61,6 +61,27 @@ if not 3 <= ORDER <= 5:
 if SAMPLES < 1000:
     raise ValueError("HXC_SAMPLES must be at least 1000.")
 
+MIN_NORMALISED_ENTROPY = float(
+    os.environ.get("HXC_MIN_NORMALISED_ENTROPY", "0.90")
+)
+MIN_PROJECTION_DISTANCE = float(
+    os.environ.get("HXC_MIN_PROJECTION_DISTANCE", "0.40")
+)
+MIN_REFERENCE_DISTANCE = float(
+    os.environ.get("HXC_MIN_REFERENCE_DISTANCE", "0.30")
+)
+MIN_AVERAGE_SUPPORT = float(
+    os.environ.get("HXC_MIN_AVERAGE_SUPPORT", "0.70")
+)
+CATALOGUE_CACHE = Path(
+    os.environ.get(
+        "HXC_CATALOGUE_CACHE",
+        "/content/.cache/hxc_catalogues",
+    )
+)
+CATALOGUE_VERSION = 3
+COMPLETE_CATALOGUE_MAX_ORDER = 4
+
 UNICODE_SYMBOL_CATEGORIES = frozenset({"Sm", "So", "Sk", "Sc"})
 RESERVED_GLYPHS = frozenset(
     {
@@ -127,12 +148,16 @@ class StructureCandidate:
     table: tuple[tuple[int, ...], ...]
     canonical: tuple[int, ...]
     properties: dict[str, object]
+    classifications: tuple[str, ...]
+    metrics: dict[str, object]
     fingerprint: tuple[object, ...]
     entropy: float
     interesting_law_count: int
     sample_index: int
     score: float = 0.0
-    fingerprint_frequency: int = 0
+    exploration_fingerprint_frequency: int = 0
+    catalogue_memberships: tuple[str, ...] = ()
+    novelty_label: str = "historical_novelty_unverified"
 
 
 def banner(text: str) -> None:
@@ -308,6 +333,490 @@ def canonical_form(
     )
 
 
+
+def flatten_table(
+    table: tuple[tuple[int, ...], ...],
+) -> tuple[int, ...]:
+    return tuple(value for row in table for value in row)
+
+
+def unflatten_table(
+    values: tuple[int, ...] | list[int],
+) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(values[row * ORDER + column] for column in range(ORDER))
+        for row in range(ORDER)
+    )
+
+
+def transpose_table(
+    table: tuple[tuple[int, ...], ...],
+) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(table[column][row] for column in range(ORDER))
+        for row in range(ORDER)
+    )
+
+
+def _iter_domain_bits(bits: int):
+    while bits:
+        lowest = bits & -bits
+        yield lowest.bit_length() - 1
+        bits -= lowest
+
+
+def _singleton_domain_value(bits: int) -> int | None:
+    if bits and bits & (bits - 1) == 0:
+        return bits.bit_length() - 1
+    return None
+
+
+def enumerate_right_shelves_complete() -> list[tuple[tuple[int, ...], ...]]:
+    """Enumerate every labelled right shelf for ORDER <= 4.
+
+    Writing R_y(x) = x*y, right self-distributivity becomes
+
+        R_z ∘ R_y = R_{R_z(y)} ∘ R_z.
+
+    The enumerator treats the columns as unary maps and applies finite-domain
+    propagation before branching. At order 4 it returns 14,067 labelled
+    shelves, which collapse to 720 isomorphism classes.
+    """
+
+    if ORDER > COMPLETE_CATALOGUE_MAX_ORDER:
+        raise RuntimeError(
+            "Complete shelf enumeration is supported only through order 4."
+        )
+
+    from itertools import product as cartesian_product
+
+    functions = list(cartesian_product(range(ORDER), repeat=ORDER))
+    function_index = {
+        function: index
+        for index, function in enumerate(functions)
+    }
+    function_count = len(functions)
+
+    composition = [
+        [0 for _ in range(function_count)]
+        for _ in range(function_count)
+    ]
+    for outer_index, outer in enumerate(functions):
+        for inner_index, inner in enumerate(functions):
+            composition[outer_index][inner_index] = function_index[
+                tuple(outer[inner[x]] for x in range(ORDER))
+            ]
+
+    supports_right = [
+        [0 for _ in range(function_count)]
+        for _ in range(function_count)
+    ]
+    supports_left = [
+        [0 for _ in range(function_count)]
+        for _ in range(function_count)
+    ]
+
+    for z_function in range(function_count):
+        right_groups: dict[int, int] = {}
+        left_groups: dict[int, int] = {}
+
+        for candidate_k in range(function_count):
+            result = composition[candidate_k][z_function]
+            right_groups[result] = (
+                right_groups.get(result, 0) | (1 << candidate_k)
+            )
+
+        for candidate_y in range(function_count):
+            result = composition[z_function][candidate_y]
+            left_groups[result] = (
+                left_groups.get(result, 0) | (1 << candidate_y)
+            )
+
+        for candidate_y in range(function_count):
+            supports_right[z_function][candidate_y] = right_groups.get(
+                composition[z_function][candidate_y],
+                0,
+            )
+
+        for candidate_k in range(function_count):
+            supports_left[z_function][candidate_k] = left_groups.get(
+                composition[candidate_k][z_function],
+                0,
+            )
+
+    full_domain = (1 << function_count) - 1
+    solutions: list[tuple[tuple[int, ...], ...]] = []
+
+    def propagate(domains: tuple[int, ...]) -> tuple[int, ...] | None:
+        current = list(domains)
+        changed = True
+
+        while changed:
+            changed = False
+
+            for z_index, z_domain in enumerate(current):
+                z_function = _singleton_domain_value(z_domain)
+                if z_function is None:
+                    continue
+
+                z_map = functions[z_function]
+
+                for y_index in range(ORDER):
+                    k_index = z_map[y_index]
+                    y_domain = current[y_index]
+                    k_domain = current[k_index]
+
+                    if y_index == k_index:
+                        filtered = 0
+                        for candidate in _iter_domain_bits(y_domain):
+                            if (
+                                supports_right[z_function][candidate]
+                                >> candidate
+                            ) & 1:
+                                filtered |= 1 << candidate
+
+                        if filtered == 0:
+                            return None
+                        if filtered != y_domain:
+                            current[y_index] = filtered
+                            changed = True
+                        continue
+
+                    filtered_y = 0
+                    for candidate_y in _iter_domain_bits(y_domain):
+                        if (
+                            supports_right[z_function][candidate_y]
+                            & k_domain
+                        ):
+                            filtered_y |= 1 << candidate_y
+
+                    if filtered_y == 0:
+                        return None
+
+                    filtered_k = 0
+                    for candidate_k in _iter_domain_bits(k_domain):
+                        if (
+                            supports_left[z_function][candidate_k]
+                            & filtered_y
+                        ):
+                            filtered_k |= 1 << candidate_k
+
+                    if filtered_k == 0:
+                        return None
+
+                    if filtered_y != y_domain:
+                        current[y_index] = filtered_y
+                        changed = True
+                    if filtered_k != k_domain:
+                        current[k_index] = filtered_k
+                        changed = True
+
+        return tuple(current)
+
+    def search(domains: tuple[int, ...]) -> None:
+        reduced = propagate(domains)
+        if reduced is None:
+            return
+
+        assigned = [
+            _singleton_domain_value(domain)
+            for domain in reduced
+        ]
+
+        if all(value is not None for value in assigned):
+            column_functions = [
+                functions[int(value)]
+                for value in assigned
+            ]
+            table = tuple(
+                tuple(
+                    column_functions[column][row]
+                    for column in range(ORDER)
+                )
+                for row in range(ORDER)
+            )
+            solutions.append(table)
+            return
+
+        branch_index = min(
+            (
+                index
+                for index, domain in enumerate(reduced)
+                if _singleton_domain_value(domain) is None
+            ),
+            key=lambda index: reduced[index].bit_count(),
+        )
+
+        for candidate in _iter_domain_bits(reduced[branch_index]):
+            branch = list(reduced)
+            branch[branch_index] = 1 << candidate
+            search(tuple(branch))
+
+    search(tuple(full_domain for _ in range(ORDER)))
+    return solutions
+
+
+def enumerate_quasigroups_complete() -> list[tuple[tuple[int, ...], ...]]:
+    """Enumerate every labelled quasigroup table for ORDER <= 4."""
+
+    if ORDER > COMPLETE_CATALOGUE_MAX_ORDER:
+        raise RuntimeError(
+            "Complete quasigroup enumeration is supported only through order 4."
+        )
+
+    row_permutations = tuple(permutations(range(ORDER)))
+    results: list[tuple[tuple[int, ...], ...]] = []
+
+    def search_rows(
+        selected: list[tuple[int, ...]],
+    ) -> None:
+        if len(selected) == ORDER:
+            results.append(tuple(selected))
+            return
+
+        for row in row_permutations:
+            if any(
+                row[column] in {
+                    existing[column]
+                    for existing in selected
+                }
+                for column in range(ORDER)
+            ):
+                continue
+            selected.append(row)
+            search_rows(selected)
+            selected.pop()
+
+    search_rows([])
+    return results
+
+
+def right_translations_bijective(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        len({table[x][y] for x in range(ORDER)}) == ORDER
+        for y in range(ORDER)
+    )
+
+
+def left_translations_bijective(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        len(set(table[x])) == ORDER
+        for x in range(ORDER)
+    )
+
+
+def right_involutory(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        table[table[x][y]][y] == x
+        for x in range(ORDER)
+        for y in range(ORDER)
+    )
+
+
+def left_involutory(
+    table: tuple[tuple[int, ...], ...],
+) -> bool:
+    return all(
+        table[x][table[x][y]] == y
+        for x in range(ORDER)
+        for y in range(ORDER)
+    )
+
+
+def catalogue_sha256(
+    catalogue: set[tuple[int, ...]],
+) -> str:
+    payload = json.dumps(
+        [list(entry) for entry in sorted(catalogue)],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def build_complete_catalogues() -> tuple[
+    dict[str, set[tuple[int, ...]]],
+    dict[str, object],
+]:
+    """Build or load complete order-3/4 shelf and quasigroup catalogues."""
+
+    reference_classes = {
+        canonical_form(table)
+        for table in reference_library().values()
+    }
+
+    if ORDER > COMPLETE_CATALOGUE_MAX_ORDER:
+        catalogues = {
+            "core_references": reference_classes,
+        }
+        metadata = {
+            "complete": False,
+            "order": ORDER,
+            "scope": (
+                "Core references only. Complete shelf/quasigroup catalogue "
+                "generation is limited to order <= 4."
+            ),
+            "counts": {
+                name: len(values)
+                for name, values in catalogues.items()
+            },
+            "hashes": {
+                name: catalogue_sha256(values)
+                for name, values in catalogues.items()
+            },
+        }
+        return catalogues, metadata
+
+    CATALOGUE_CACHE.mkdir(parents=True, exist_ok=True)
+    cache_path = CATALOGUE_CACHE / (
+        f"hxc_catalogues_v{CATALOGUE_VERSION}_order_{ORDER}.json"
+    )
+
+    if cache_path.exists():
+        document = json.loads(cache_path.read_text(encoding="utf-8"))
+        if (
+            document.get("version") == CATALOGUE_VERSION
+            and document.get("order") == ORDER
+        ):
+            catalogues = {
+                name: {
+                    tuple(int(value) for value in entry)
+                    for entry in entries
+                }
+                for name, entries in document["catalogues"].items()
+            }
+            return catalogues, document["metadata"]
+
+    labelled_right_shelves = enumerate_right_shelves_complete()
+
+    right_shelves: set[tuple[int, ...]] = set()
+    right_spindles: set[tuple[int, ...]] = set()
+    right_racks: set[tuple[int, ...]] = set()
+    right_quandles: set[tuple[int, ...]] = set()
+    right_kei: set[tuple[int, ...]] = set()
+
+    for table in labelled_right_shelves:
+        canonical = canonical_form(table)
+        right_shelves.add(canonical)
+
+        idempotent = all(
+            table[x][x] == x
+            for x in range(ORDER)
+        )
+        translations_bijective = right_translations_bijective(table)
+
+        if idempotent:
+            right_spindles.add(canonical)
+        if translations_bijective:
+            right_racks.add(canonical)
+        if idempotent and translations_bijective:
+            right_quandles.add(canonical)
+        if (
+            idempotent
+            and translations_bijective
+            and right_involutory(table)
+        ):
+            right_kei.add(canonical)
+
+    labelled_left_shelves = [
+        transpose_table(table)
+        for table in labelled_right_shelves
+    ]
+
+    left_shelves: set[tuple[int, ...]] = set()
+    left_spindles: set[tuple[int, ...]] = set()
+    left_racks: set[tuple[int, ...]] = set()
+    left_quandles: set[tuple[int, ...]] = set()
+    left_kei: set[tuple[int, ...]] = set()
+
+    for table in labelled_left_shelves:
+        canonical = canonical_form(table)
+        left_shelves.add(canonical)
+
+        idempotent = all(
+            table[x][x] == x
+            for x in range(ORDER)
+        )
+        translations_bijective = left_translations_bijective(table)
+
+        if idempotent:
+            left_spindles.add(canonical)
+        if translations_bijective:
+            left_racks.add(canonical)
+        if idempotent and translations_bijective:
+            left_quandles.add(canonical)
+        if (
+            idempotent
+            and translations_bijective
+            and left_involutory(table)
+        ):
+            left_kei.add(canonical)
+
+    quasigroups = {
+        canonical_form(table)
+        for table in enumerate_quasigroups_complete()
+    }
+
+    catalogues = {
+        "core_references": reference_classes,
+        "right_shelves": right_shelves,
+        "left_shelves": left_shelves,
+        "right_spindles": right_spindles,
+        "left_spindles": left_spindles,
+        "right_racks": right_racks,
+        "left_racks": left_racks,
+        "right_quandles": right_quandles,
+        "left_quandles": left_quandles,
+        "right_kei": right_kei,
+        "left_kei": left_kei,
+        "quasigroups": quasigroups,
+    }
+
+    metadata = {
+        "complete": True,
+        "order": ORDER,
+        "scope": (
+            "Complete up-to-isomorphism catalogues generated in this run for "
+            "left/right shelves, spindles, racks, quandles, kei and "
+            "quasigroups on the selected carrier order."
+        ),
+        "labelled_right_shelves": len(labelled_right_shelves),
+        "labelled_quasigroups": len(enumerate_quasigroups_complete()),
+        "counts": {
+            name: len(values)
+            for name, values in catalogues.items()
+        },
+        "hashes": {
+            name: catalogue_sha256(values)
+            for name, values in catalogues.items()
+        },
+    }
+
+    cache_document = {
+        "version": CATALOGUE_VERSION,
+        "order": ORDER,
+        "metadata": metadata,
+        "catalogues": {
+            name: [
+                list(entry)
+                for entry in sorted(values)
+            ]
+            for name, values in catalogues.items()
+        },
+    }
+    cache_path.write_text(
+        json.dumps(cache_document, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    return catalogues, metadata
+
+
 def symmetry_permutation() -> tuple[int, ...]:
     # A nontrivial involution. It swaps 0 and 1 and fixes all other elements.
     return tuple([1, 0] + list(range(2, ORDER)))
@@ -357,6 +866,9 @@ def analyse_properties(
     table: tuple[tuple[int, ...], ...],
 ) -> dict[str, object]:
     elements = range(ORDER)
+
+    left_bijective = left_translations_bijective(table)
+    right_bijective = right_translations_bijective(table)
 
     properties: dict[str, object] = {
         "commutative": all(
@@ -411,16 +923,11 @@ def analyse_properties(
             for y in elements
             for z in elements
         ),
-        "latin": (
-            all(
-                len({table[x][y] for y in elements}) == ORDER
-                for x in elements
-            )
-            and all(
-                len({table[x][y] for x in elements}) == ORDER
-                for y in elements
-            )
-        ),
+        "latin": left_bijective and right_bijective,
+        "left_translation_bijective": left_bijective,
+        "right_translation_bijective": right_bijective,
+        "left_involutory": left_involutory(table),
+        "right_involutory": right_involutory(table),
         "surjective": (
             len(
                 {
@@ -451,6 +958,193 @@ def analyse_properties(
     )
 
     return properties
+
+
+def classify_structure(
+    properties: dict[str, object],
+) -> tuple[str, ...]:
+    classes = ["magma"]
+
+    associative = bool(properties["associative"])
+    commutative = bool(properties["commutative"])
+    idempotent = bool(properties["idempotent"])
+    left_sd = bool(properties["left_self_distributive"])
+    right_sd = bool(properties["right_self_distributive"])
+    latin = bool(properties["latin"])
+    left_identity = properties["left_identity"] is not None
+    right_identity = properties["right_identity"] is not None
+
+    if associative:
+        classes.append("semigroup")
+    if associative and idempotent:
+        classes.append("band")
+    if associative and commutative and idempotent:
+        classes.append("semilattice")
+
+    if left_sd:
+        classes.append("left_shelf")
+    if right_sd:
+        classes.append("right_shelf")
+    if left_sd and right_sd:
+        classes.append("bi_shelf")
+
+    if left_sd and idempotent:
+        classes.append("left_spindle")
+    if right_sd and idempotent:
+        classes.append("right_spindle")
+
+    if left_sd and bool(properties["left_translation_bijective"]):
+        classes.append("left_rack")
+    if right_sd and bool(properties["right_translation_bijective"]):
+        classes.append("right_rack")
+
+    if (
+        left_sd
+        and idempotent
+        and bool(properties["left_translation_bijective"])
+    ):
+        classes.append("left_quandle")
+    if (
+        right_sd
+        and idempotent
+        and bool(properties["right_translation_bijective"])
+    ):
+        classes.append("right_quandle")
+
+    if (
+        "left_quandle" in classes
+        and bool(properties["left_involutory"])
+    ):
+        classes.append("left_kei")
+    if (
+        "right_quandle" in classes
+        and bool(properties["right_involutory"])
+    ):
+        classes.append("right_kei")
+
+    if latin:
+        classes.append("quasigroup")
+    if latin and left_identity and right_identity:
+        classes.append("loop")
+    if "loop" in classes and associative:
+        classes.append("group")
+    if "group" in classes and commutative:
+        classes.append("abelian_group")
+
+    if bool(properties["medial"]):
+        classes.append("medial_magma")
+
+    return tuple(classes)
+
+
+def structural_metrics(
+    table: tuple[tuple[int, ...], ...],
+    references: dict[str, tuple[tuple[int, ...], ...]],
+) -> dict[str, object]:
+    row_supports = [
+        len(set(row))
+        for row in table
+    ]
+    column_supports = [
+        len({table[x][y] for x in range(ORDER)})
+        for y in range(ORDER)
+    ]
+
+    entropy = output_entropy(table)
+    max_entropy = math.log2(ORDER)
+    normalised_entropy = (
+        entropy / max_entropy
+        if max_entropy > 0
+        else 0.0
+    )
+
+    left_projection_distance = sum(
+        table[x][y] != x
+        for x in range(ORDER)
+        for y in range(ORDER)
+    ) / (ORDER * ORDER)
+
+    right_projection_distance = sum(
+        table[x][y] != y
+        for x in range(ORDER)
+        for y in range(ORDER)
+    ) / (ORDER * ORDER)
+
+    unique_rows = len(set(table))
+    unique_columns = len(
+        {
+            tuple(table[x][y] for x in range(ORDER))
+            for y in range(ORDER)
+        }
+    )
+
+    average_support = (
+        sum(row_supports) + sum(column_supports)
+    ) / (2 * ORDER * ORDER)
+
+    nearest_reference_name = ""
+    nearest_reference_distance = 1.0
+
+    for name, reference in references.items():
+        distance = min(
+            sum(
+                table[x][y] != transformed[x][y]
+                for x in range(ORDER)
+                for y in range(ORDER)
+            ) / (ORDER * ORDER)
+            for transformed in (
+                relabel_table(reference, permutation)
+                for permutation in PERMUTATIONS
+            )
+        )
+        if distance < nearest_reference_distance:
+            nearest_reference_distance = distance
+            nearest_reference_name = name
+
+    return {
+        "row_supports": row_supports,
+        "column_supports": column_supports,
+        "minimum_row_support": min(row_supports),
+        "minimum_column_support": min(column_supports),
+        "constant_rows": sum(support == 1 for support in row_supports),
+        "constant_columns": sum(
+            support == 1
+            for support in column_supports
+        ),
+        "unique_rows": unique_rows,
+        "unique_columns": unique_columns,
+        "average_support": average_support,
+        "entropy_bits": entropy,
+        "normalised_entropy": normalised_entropy,
+        "left_projection_distance": left_projection_distance,
+        "right_projection_distance": right_projection_distance,
+        "minimum_projection_distance": min(
+            left_projection_distance,
+            right_projection_distance,
+        ),
+        "nearest_reference_name": nearest_reference_name,
+        "nearest_reference_distance": nearest_reference_distance,
+    }
+
+
+def passes_nondegeneracy(
+    metrics: dict[str, object],
+) -> bool:
+    return (
+        int(metrics["constant_rows"]) == 0
+        and int(metrics["constant_columns"]) == 0
+        and int(metrics["minimum_row_support"]) >= 2
+        and int(metrics["minimum_column_support"]) >= 2
+        and int(metrics["unique_rows"]) == ORDER
+        and int(metrics["unique_columns"]) == ORDER
+        and float(metrics["average_support"]) >= MIN_AVERAGE_SUPPORT
+        and float(metrics["normalised_entropy"]) >= MIN_NORMALISED_ENTROPY
+        and float(metrics["minimum_projection_distance"])
+            >= MIN_PROJECTION_DISTANCE
+        and float(metrics["nearest_reference_distance"])
+            >= MIN_REFERENCE_DISTANCE
+    )
+
 
 
 def law_fingerprint(properties: dict[str, object]) -> tuple[object, ...]:
@@ -517,76 +1211,115 @@ def first_counterexample(
 
 def search_novel_structure(
     rng: random.Random,
-) -> tuple[StructureCandidate, dict[str, int]]:
+    catalogues: dict[str, set[tuple[int, ...]]],
+    catalogue_metadata: dict[str, object],
+) -> tuple[StructureCandidate, dict[str, object]]:
     automorphism = symmetry_permutation()
     references = reference_library()
-    reference_canonical = {
-        name: canonical_form(table)
-        for name, table in references.items()
+
+    rejection_catalogues = {
+        name: values
+        for name, values in catalogues.items()
+        if name != "core_references"
     }
-    reference_classes = set(reference_canonical.values())
 
     seen_classes: set[tuple[int, ...]] = set()
     candidates: list[StructureCandidate] = []
+    rejection_counts: Counter[str] = Counter()
+    fingerprint_counts: Counter[tuple[object, ...]] = Counter()
 
     for sample_index in range(SAMPLES):
         table = generate_equivariant_table(rng, automorphism)
         canonical = canonical_form(table)
 
         if canonical in seen_classes:
+            rejection_counts["duplicate_isomorphism_class"] += 1
             continue
         seen_classes.add(canonical)
 
-        if canonical in reference_classes:
+        memberships = tuple(
+            name
+            for name, catalogue in catalogues.items()
+            if canonical in catalogue
+        )
+
+        if memberships:
+            for membership in memberships:
+                rejection_counts[f"catalogue:{membership}"] += 1
             continue
 
         properties = analyse_properties(table)
+        classifications = classify_structure(properties)
+        metrics = structural_metrics(table, references)
+
+        if not bool(properties["surjective"]):
+            rejection_counts["not_surjective"] += 1
+            continue
+        if bool(properties["associative"]):
+            rejection_counts["associative"] += 1
+            continue
+        if not passes_nondegeneracy(metrics):
+            rejection_counts["nondegeneracy_gate"] += 1
+            continue
+
         interesting_count = sum(
             bool(properties[key])
             for key in INTERESTING_LAWS
         )
+        if interesting_count < 1:
+            rejection_counts["no_retained_special_law"] += 1
+            continue
 
-        if not bool(properties["surjective"]):
-            continue
-        if bool(properties["associative"]):
-            continue
-        if interesting_count < 2:
-            continue
+        fingerprint = law_fingerprint(properties)
+        fingerprint_counts[fingerprint] += 1
 
         candidates.append(
             StructureCandidate(
                 table=table,
                 canonical=canonical,
                 properties=properties,
-                fingerprint=law_fingerprint(properties),
-                entropy=output_entropy(table),
+                classifications=classifications,
+                metrics=metrics,
+                fingerprint=fingerprint,
+                entropy=float(metrics["entropy_bits"]),
                 interesting_law_count=interesting_count,
                 sample_index=sample_index,
+                catalogue_memberships=(),
+                novelty_label=(
+                    "outside_complete_generated_order_catalogues"
+                    if bool(catalogue_metadata.get("complete"))
+                    else "outside_partial_reference_catalogues"
+                ),
             )
         )
 
     if not candidates:
         raise RuntimeError(
-            "No qualifying structure found. Increase HXC_SAMPLES or change HXC_SEED."
+            "No candidate passed the strengthened catalogue and "
+            "non-degeneracy gates. Increase HXC_SAMPLES or relax an explicit "
+            "HXC_MIN_* threshold."
         )
 
-    frequencies = Counter(candidate.fingerprint for candidate in candidates)
     scored: list[StructureCandidate] = []
 
     for candidate in candidates:
         properties = candidate.properties
-        frequency = frequencies[candidate.fingerprint]
-        one_sided_identity = (
-            (properties["left_identity"] is None)
-            != (properties["right_identity"] is None)
-        )
+        metrics = candidate.metrics
+        exploration_frequency = fingerprint_counts[candidate.fingerprint]
 
+        # Sample frequency is reported for exploration only. It contributes
+        # nothing to the mathematical-interest score.
         score = (
-            4.0 * candidate.interesting_law_count
-            + 2.0 * candidate.entropy
-            + 3.0 * (not bool(properties["commutative"]))
-            + 2.0 * one_sided_identity
-            + 5.0 / frequency
+            3.0 * candidate.interesting_law_count
+            + 8.0 * float(metrics["normalised_entropy"])
+            + 10.0 * float(metrics["average_support"])
+            + 6.0 * float(metrics["minimum_projection_distance"])
+            + 6.0 * float(metrics["nearest_reference_distance"])
+            + 1.5 * (not bool(properties["commutative"]))
+            + 1.0 * (
+                properties["left_identity"] is not None
+                or properties["right_identity"] is not None
+            )
         )
 
         scored.append(
@@ -594,12 +1327,16 @@ def search_novel_structure(
                 table=candidate.table,
                 canonical=candidate.canonical,
                 properties=candidate.properties,
+                classifications=candidate.classifications,
+                metrics=candidate.metrics,
                 fingerprint=candidate.fingerprint,
                 entropy=candidate.entropy,
                 interesting_law_count=candidate.interesting_law_count,
                 sample_index=candidate.sample_index,
                 score=score,
-                fingerprint_frequency=frequency,
+                exploration_fingerprint_frequency=exploration_frequency,
+                catalogue_memberships=candidate.catalogue_memberships,
+                novelty_label=candidate.novelty_label,
             )
         )
 
@@ -607,17 +1344,24 @@ def search_novel_structure(
         scored,
         key=lambda candidate: (
             candidate.score,
-            candidate.interesting_law_count,
-            candidate.entropy,
+            float(candidate.metrics["average_support"]),
+            float(candidate.metrics["normalised_entropy"]),
+            float(candidate.metrics["minimum_projection_distance"]),
             -candidate.sample_index,
         ),
     )
 
-    statistics = {
+    statistics: dict[str, object] = {
         "samples_requested": SAMPLES,
         "isomorphism_classes_seen": len(seen_classes),
         "qualifying_classes": len(candidates),
-        "reference_classes": len(reference_classes),
+        "catalogue_complete": bool(catalogue_metadata.get("complete")),
+        "catalogue_scope": catalogue_metadata.get("scope"),
+        "catalogue_counts": catalogue_metadata.get("counts", {}),
+        "catalogue_hashes": catalogue_metadata.get("hashes", {}),
+        "rejection_counts": dict(sorted(rejection_counts.items())),
+        "score_uses_sample_rarity": False,
+        "historical_novelty_verified": False,
     }
     return selected, statistics
 
@@ -728,6 +1472,284 @@ def lean_true_law_theorems(properties: dict[str, object]) -> str:
         if bool(properties[key])
     ]
     return "\n".join(selected)
+
+
+
+def lean_nondegeneracy_theorems() -> str:
+    return """theorem every_row_depends_on_right_argument :
+    ∀ x : Carrier,
+      ∃ y z : Carrier, alienLaw x y ≠ alienLaw x z := by
+  decide
+
+theorem every_column_depends_on_left_argument :
+    ∀ y : Carrier,
+      ∃ x z : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem rows_are_pairwise_distinct :
+    ∀ x z : Carrier,
+      x ≠ z →
+      ∃ y : Carrier, alienLaw x y ≠ alienLaw z y := by
+  decide
+
+theorem columns_are_pairwise_distinct :
+    ∀ y w : Carrier,
+      y ≠ w →
+      ∃ x : Carrier, alienLaw x y ≠ alienLaw x w := by
+  decide
+
+theorem alien_not_left_projection :
+    ∃ x y : Carrier, alienLaw x y ≠ x := by
+  decide
+
+theorem alien_not_right_projection :
+    ∃ x y : Carrier, alienLaw x y ≠ y := by
+  decide
+"""
+
+
+def lean_classification_predicates(
+    table: tuple[tuple[int, ...], ...],
+) -> str:
+    """Generate class predicates and explicit finite exclusion proofs.
+
+    We intentionally avoid `∃!` notation and avoid asking `decide` to infer
+    decidability for large quantified function propositions.  Instead, Python
+    supplies concrete counterexample indices and Lean kernel-checks the exact
+    equalities and inequalities.
+    """
+
+    left_sd_witness: tuple[int, int, int] | None = None
+    right_sd_witness: tuple[int, int, int] | None = None
+
+    for x in range(ORDER):
+        for y in range(ORDER):
+            for z in range(ORDER):
+                if (
+                    table[x][table[y][z]]
+                    != table[table[x][y]][table[x][z]]
+                    and left_sd_witness is None
+                ):
+                    left_sd_witness = (x, y, z)
+
+                if (
+                    table[table[x][y]][z]
+                    != table[table[x][z]][table[y][z]]
+                    and right_sd_witness is None
+                ):
+                    right_sd_witness = (x, y, z)
+
+    if left_sd_witness is None:
+        raise RuntimeError(
+            "Selected candidate unexpectedly satisfies the left-shelf law."
+        )
+    if right_sd_witness is None:
+        raise RuntimeError(
+            "Selected candidate unexpectedly satisfies the right-shelf law."
+        )
+
+    quasigroup_witness: tuple[str, int, int, int] | None = None
+
+    # A finite translation is non-bijective exactly when two distinct inputs
+    # collide.  Prefer a row collision, then fall back to a column collision.
+    for x in range(ORDER):
+        for y in range(ORDER):
+            for z in range(y + 1, ORDER):
+                if table[x][y] == table[x][z]:
+                    quasigroup_witness = ("row", x, y, z)
+                    break
+            if quasigroup_witness is not None:
+                break
+        if quasigroup_witness is not None:
+            break
+
+    if quasigroup_witness is None:
+        for y in range(ORDER):
+            for x in range(ORDER):
+                for z in range(x + 1, ORDER):
+                    if table[x][y] == table[z][y]:
+                        quasigroup_witness = ("column", y, x, z)
+                        break
+                if quasigroup_witness is not None:
+                    break
+            if quasigroup_witness is not None:
+                break
+
+    if quasigroup_witness is None:
+        raise RuntimeError(
+            "Selected candidate unexpectedly has bijective translations."
+        )
+
+    lx, ly, lz = left_sd_witness
+    rx, ry, rz = right_sd_witness
+
+    if quasigroup_witness[0] == "row":
+        _, qx, qy, qz = quasigroup_witness
+        quasigroup_proof = f"""theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier {qx}) (mkCarrier {qy}) =
+      alienLaw (mkCarrier {qx}) (mkCarrier {qz}) := by
+    decide
+  have equalInputs :
+      mkCarrier {qy} = mkCarrier {qz} :=
+    h.1.1
+      (mkCarrier {qx})
+      (mkCarrier {qy})
+      (mkCarrier {qz})
+      sameOutput
+  have differentInputs :
+      mkCarrier {qy} ≠ mkCarrier {qz} := by
+    decide
+  exact differentInputs equalInputs
+"""
+    else:
+        _, qy, qx, qz = quasigroup_witness
+        quasigroup_proof = f"""theorem alien_not_quasigroup :
+    ¬ IsQuasigroup alienLaw := by
+  intro h
+  have sameOutput :
+      alienLaw (mkCarrier {qx}) (mkCarrier {qy}) =
+      alienLaw (mkCarrier {qz}) (mkCarrier {qy}) := by
+    decide
+  have equalInputs :
+      mkCarrier {qx} = mkCarrier {qz} :=
+    h.2.1
+      (mkCarrier {qy})
+      (mkCarrier {qx})
+      (mkCarrier {qz})
+      sameOutput
+  have differentInputs :
+      mkCarrier {qx} ≠ mkCarrier {qz} := by
+    decide
+  exact differentInputs equalInputs
+"""
+
+    return f"""def IsLeftShelf
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  ∀ x y z,
+    law x (law y z) =
+    law (law x y) (law x z)
+
+def IsRightShelf
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  ∀ x y z,
+    law (law x y) z =
+    law (law x z) (law y z)
+
+def IsIdempotent
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  ∀ x, law x x = x
+
+def LeftTranslationsBijective
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  (∀ x y z, law x y = law x z → y = z) ∧
+  (∀ x target, ∃ y, law x y = target)
+
+def RightTranslationsBijective
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  (∀ y x z, law x y = law z y → x = z) ∧
+  (∀ y target, ∃ x, law x y = target)
+
+def IsLeftSpindle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsLeftShelf law ∧ IsIdempotent law
+
+def IsRightSpindle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsRightShelf law ∧ IsIdempotent law
+
+def IsLeftRack
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsLeftShelf law ∧ LeftTranslationsBijective law
+
+def IsRightRack
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsRightShelf law ∧ RightTranslationsBijective law
+
+def IsLeftQuandle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsLeftRack law ∧ IsIdempotent law
+
+def IsRightQuandle
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  IsRightRack law ∧ IsIdempotent law
+
+def IsQuasigroup
+    (law : Carrier → Carrier → Carrier) : Prop :=
+  LeftTranslationsBijective law ∧
+  RightTranslationsBijective law
+
+theorem alien_not_left_shelf :
+    ¬ IsLeftShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier {lx})
+      (mkCarrier {ly})
+      (mkCarrier {lz})
+  have counterexample :
+      alienLaw
+        (mkCarrier {lx})
+        (alienLaw (mkCarrier {ly}) (mkCarrier {lz})) ≠
+      alienLaw
+        (alienLaw (mkCarrier {lx}) (mkCarrier {ly}))
+        (alienLaw (mkCarrier {lx}) (mkCarrier {lz})) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_right_shelf :
+    ¬ IsRightShelf alienLaw := by
+  intro h
+  have claimed :=
+    h
+      (mkCarrier {rx})
+      (mkCarrier {ry})
+      (mkCarrier {rz})
+  have counterexample :
+      alienLaw
+        (alienLaw (mkCarrier {rx}) (mkCarrier {ry}))
+        (mkCarrier {rz}) ≠
+      alienLaw
+        (alienLaw (mkCarrier {rx}) (mkCarrier {rz}))
+        (alienLaw (mkCarrier {ry}) (mkCarrier {rz})) := by
+    decide
+  exact counterexample claimed
+
+theorem alien_not_left_spindle :
+    ¬ IsLeftSpindle alienLaw := by
+  intro h
+  exact alien_not_left_shelf h.1
+
+theorem alien_not_right_spindle :
+    ¬ IsRightSpindle alienLaw := by
+  intro h
+  exact alien_not_right_shelf h.1
+
+theorem alien_not_left_rack :
+    ¬ IsLeftRack alienLaw := by
+  intro h
+  exact alien_not_left_shelf h.1
+
+theorem alien_not_right_rack :
+    ¬ IsRightRack alienLaw := by
+  intro h
+  exact alien_not_right_shelf h.1
+
+theorem alien_not_left_quandle :
+    ¬ IsLeftQuandle alienLaw := by
+  intro h
+  exact alien_not_left_rack h.1
+
+theorem alien_not_right_quandle :
+    ¬ IsRightQuandle alienLaw := by
+  intro h
+  exact alien_not_right_rack h.1
+
+{quasigroup_proof}
+"""
+
 
 
 def lean_identity_theorems(properties: dict[str, object]) -> str:
@@ -995,6 +2017,8 @@ def make_lean_source(
     automorphism = symmetry_permutation()
     symmetry_definition = lean_symmetry_definition(automorphism)
     true_laws = lean_true_law_theorems(candidate.properties)
+    nondegeneracy_laws = lean_nondegeneracy_theorems()
+    classification_predicates = lean_classification_predicates(candidate.table)
     identity_laws = lean_identity_theorems(candidate.properties)
     counterexamples = lean_counterexample_theorems(
         candidate.table,
@@ -1009,6 +2033,18 @@ def make_lean_source(
         for key in LAW_KEYS
         if bool(candidate.properties[key])
     ]
+    catalogue_scope = candidate.novelty_label
+    catalogue_manifest_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "classifications": candidate.classifications,
+                "metrics": candidate.metrics,
+                "catalogue_memberships": candidate.catalogue_memberships,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
     return f"""import Std
 
@@ -1032,8 +2068,9 @@ Automorphism:
 The table was selected from arbitrary finite operation tables after:
 
 * isomorphism-class deduplication;
-* rejection of an explicit reference library;
-* rare-law fingerprint scoring;
+* complete generated shelf/quandle/quasigroup catalogue rejection;
+* two-argument non-degeneracy and entropy gates;
+* structural-interest scoring with sample rarity excluded;
 * counterexample search;
 * nontrivial automorphism enforcement.
 
@@ -1060,6 +2097,14 @@ def mkCarrier (value : Nat) : Carrier :=
 {true_laws}
 
 {identity_laws}
+
+/-! ## Non-degeneracy certificates -/
+
+{nondegeneracy_laws}
+
+/-! ## Variety classification and exclusion -/
+
+{classification_predicates}
 
 /-! ## Nontrivial symmetry -/
 
@@ -1104,6 +2149,19 @@ structure NovelStructureCertificate where
     ∀ x y, symmetry (law x y) = law (symmetry x) (symmetry y)
   symmetryNontrivial :
     symmetry (mkCarrier 0) ≠ mkCarrier 0
+  everyRowDependsOnRight :
+    ∀ x, ∃ y z, law x y ≠ law x z
+  everyColumnDependsOnLeft :
+    ∀ y, ∃ x z, law x y ≠ law z y
+  notLeftShelf :
+    ¬ IsLeftShelf law
+  notRightShelf :
+    ¬ IsRightShelf law
+  notQuasigroup :
+    ¬ IsQuasigroup law
+  catalogueScope : String
+  catalogueManifestHash : String
+  historicalNoveltyVerified : Bool
   notProjectionLeft :
     ¬ IsIsomorphic law leftProjection
   notProjectionRight :
@@ -1131,6 +2189,14 @@ def noveltyCertificate : NovelStructureCertificate where
   symmetryInvolution := symmetry_is_involution
   symmetryAutomorphism := symmetry_is_automorphism
   symmetryNontrivial := symmetry_is_nontrivial
+  everyRowDependsOnRight := every_row_depends_on_right_argument
+  everyColumnDependsOnLeft := every_column_depends_on_left_argument
+  notLeftShelf := alien_not_left_shelf
+  notRightShelf := alien_not_right_shelf
+  notQuasigroup := alien_not_quasigroup
+  catalogueScope := "{catalogue_scope}"
+  catalogueManifestHash := "{catalogue_manifest_hash}"
+  historicalNoveltyVerified := false
   notProjectionLeft := alien_not_isomorphic_to_left_projection
   notProjectionRight := alien_not_isomorphic_to_right_projection
   notConstantZero := alien_not_isomorphic_to_constant_zero
@@ -1156,6 +2222,11 @@ def symmetryTable : List Nat :=
 #check relabeling_registry_size
 #check relabeling_registry_nodup
 #check every_registered_relabeling_is_injective
+#check every_row_depends_on_right_argument
+#check every_column_depends_on_left_argument
+#check alien_not_left_shelf
+#check alien_not_right_shelf
+#check alien_not_quasigroup
 #check noveltyCertificate
 #check symmetry_is_automorphism
 #check rejected_associativity
@@ -1172,7 +2243,7 @@ end HXCNovel
 
 def build_report(
     candidate: StructureCandidate,
-    statistics: dict[str, int],
+    statistics: dict[str, object],
     structure_glyph: UnicodeGlyph,
     operation_glyph: UnicodeGlyph,
     symmetry_glyph: UnicodeGlyph,
@@ -1195,7 +2266,18 @@ def build_report(
         for row in candidate.table
     )
 
-    return f"""# HXC Novel Structure Invention Report
+    catalogue_counts = statistics.get("catalogue_counts", {})
+    catalogue_hashes = statistics.get("catalogue_hashes", {})
+
+    catalogue_lines = "\n".join(
+        f"- `{name}`: {catalogue_counts[name]:,} classes; "
+        f"SHA-256 `{catalogue_hashes.get(name, '')}`"
+        for name in sorted(catalogue_counts)
+    )
+
+    metrics = candidate.metrics
+
+    return f"""# HXC Strengthened Structure Invention Report
 
 ## Structure identity
 
@@ -1209,18 +2291,69 @@ def build_report(
 - Symmetry code point: `{symmetry_glyph.codepoint}`
 - Symmetry Unicode name: **{symmetry_glyph.name}**
 
+## Honest novelty labels
+
+- Search status: `{candidate.novelty_label}`
+- Historical novelty: `unverified`
+- Catalogue completeness at this order:
+  `{statistics["catalogue_complete"]}`
+- Catalogue scope: {statistics["catalogue_scope"]}
+- Sample-frequency rarity was **not used** in the score.
+- Exploration fingerprint frequency:
+  `{candidate.exploration_fingerprint_frequency}`
+
+## Classification
+
+{chr(10).join(f"- `{name}`" for name in candidate.classifications)}
+
+The generated Lean file separately certifies that the final candidate is not a
+left shelf, right shelf, spindle, rack, quandle, or quasigroup.
+
+## Complete generated catalogues
+
+{catalogue_lines}
+
 ## Search
 
 - Carrier order: `{ORDER}`
 - Random seed: `{SEED}`
 - Tables sampled: `{statistics["samples_requested"]:,}`
-- Isomorphism classes encountered: `{statistics["isomorphism_classes_seen"]:,}`
-- Qualifying non-reference classes: `{statistics["qualifying_classes"]:,}`
-- Reference classes rejected: `{statistics["reference_classes"]}`
+- Isomorphism classes encountered:
+  `{statistics["isomorphism_classes_seen"]:,}`
+- Candidates passing every strengthened gate:
+  `{statistics["qualifying_classes"]:,}`
 - Selected sample index: `{candidate.sample_index:,}`
-- Selected fingerprint frequency: `{candidate.fingerprint_frequency}`
-- Novelty score: `{candidate.score:.6f}`
-- Output entropy: `{candidate.entropy:.6f}` bits
+- Structural-interest score: `{candidate.score:.6f}`
+
+## Non-degeneracy audit
+
+- Row supports: `{metrics["row_supports"]}`
+- Column supports: `{metrics["column_supports"]}`
+- Constant rows: `{metrics["constant_rows"]}`
+- Constant columns: `{metrics["constant_columns"]}`
+- Unique rows: `{metrics["unique_rows"]}/{ORDER}`
+- Unique columns: `{metrics["unique_columns"]}/{ORDER}`
+- Average support: `{metrics["average_support"]:.6f}`
+- Entropy: `{metrics["entropy_bits"]:.6f}` bits
+- Normalised entropy: `{metrics["normalised_entropy"]:.6f}`
+- Distance from left projection:
+  `{metrics["left_projection_distance"]:.6f}`
+- Distance from right projection:
+  `{metrics["right_projection_distance"]:.6f}`
+- Nearest core reference:
+  `{metrics["nearest_reference_name"]}`
+- Distance from nearest reference orbit:
+  `{metrics["nearest_reference_distance"]:.6f}`
+
+Required gates:
+
+- every row and column is nonconstant;
+- every row and column is distinct;
+- minimum row and column support is at least 2;
+- normalised entropy is at least `{MIN_NORMALISED_ENTROPY}`;
+- projection distance is at least `{MIN_PROJECTION_DISTANCE}`;
+- nearest-reference distance is at least `{MIN_REFERENCE_DISTANCE}`;
+- average support is at least `{MIN_AVERAGE_SUPPORT}`.
 
 ## Positive laws
 
@@ -1230,8 +2363,7 @@ def build_report(
 
 {chr(10).join(f"- `{law}`" for law in false_laws)}
 
-False laws are not silently discarded. The generated Lean development retains
-explicit witnesses for key failures such as associativity and commutativity.
+False laws are retained through concrete Lean counterexample theorems.
 
 ## Operation table
 
@@ -1239,42 +2371,24 @@ explicit witnesses for key failures such as associativity and commutativity.
 {separator}
 {rows}
 
-## Symmetry
+## Formal scope
 
-The generator enforced the nontrivial involution
+Lean certifies the operation table, positive laws, counterexamples,
+non-degeneracy, witness-derived class exclusions, nontrivial automorphism, and finite
+non-isomorphism checks against the core reference library.
 
-```text
-0 ↔ 1
-2 ↦ 2
-3 ↦ 3
-```
-
-adapted to the selected carrier order. Lean verifies that this map is an
-automorphism of the generated operation.
-
-## Formal novelty statement
-
-The structure is machine-certified as non-isomorphic to the following
-reference operations:
-
-- left projection;
-- right projection;
-- constant zero;
-- modular addition;
-- modular multiplication;
-- modular subtraction;
-- minimum;
-- maximum.
-
-This is a precise finite novelty claim relative to that library. It is not a
-claim that no isomorphic structure exists in any historical catalogue.
+The Python catalogue layer exhaustively generates and hashes the complete
+order-{ORDER} shelf/spindle/rack/quandle/kei and quasigroup catalogues when
+`ORDER <= {COMPLETE_CATALOGUE_MAX_ORDER}`. Absolute historical novelty remains
+explicitly unverified.
 """
 
 
 def write_project(
     candidate: StructureCandidate,
-    statistics: dict[str, int],
+    statistics: dict[str, object],
     unicode_pool: list[UnicodeGlyph],
+    catalogues: dict[str, set[tuple[int, ...]]],
     structure_glyph: UnicodeGlyph,
     operation_glyph: UnicodeGlyph,
     symmetry_glyph: UnicodeGlyph,
@@ -1298,7 +2412,7 @@ def write_project(
     )
 
     lakefile = """name = "hxc-novel-structure-inventor"
-version = "2.1.0"
+version = "4.0.0"
 defaultTargets = ["HXCNovel"]
 
 [[lean_lib]]
@@ -1340,14 +2454,30 @@ roots = ["HXCNovel"]
             "table": candidate.table,
             "canonical_form": candidate.canonical,
             "properties": candidate.properties,
+            "classifications": candidate.classifications,
+            "metrics": candidate.metrics,
             "fingerprint": candidate.fingerprint,
             "entropy": candidate.entropy,
             "interesting_law_count": candidate.interesting_law_count,
             "sample_index": candidate.sample_index,
             "score": candidate.score,
-            "fingerprint_frequency": candidate.fingerprint_frequency,
+            "exploration_fingerprint_frequency": (
+                candidate.exploration_fingerprint_frequency
+            ),
+            "catalogue_memberships": candidate.catalogue_memberships,
+            "novelty_label": candidate.novelty_label,
+            "historical_novelty_verified": False,
         },
         "reference_library": list(reference_library()),
+    }
+
+    catalogue_manifest = {
+        "order": ORDER,
+        "complete": statistics.get("catalogue_complete"),
+        "scope": statistics.get("catalogue_scope"),
+        "counts": statistics.get("catalogue_counts"),
+        "hashes": statistics.get("catalogue_hashes"),
+        "historical_novelty_verified": False,
     }
 
     files = {
@@ -1366,6 +2496,12 @@ roots = ["HXCNovel"]
             indent=2,
         )
         + "\n",
+        "catalogue_manifest.json": json.dumps(
+            catalogue_manifest,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
         "unicode_glyph_registry.json": json.dumps(
             unicode_registry,
             ensure_ascii=False,
@@ -1374,9 +2510,26 @@ roots = ["HXCNovel"]
         + "\n",
     }
 
-    banner("HXC NOVEL-STRUCTURE PROJECT")
+    for name, catalogue in catalogues.items():
+        files[f"catalogues/{name}_order_{ORDER}.json"] = json.dumps(
+            {
+                "name": name,
+                "order": ORDER,
+                "count": len(catalogue),
+                "sha256": catalogue_sha256(catalogue),
+                "canonical_tables": [
+                    list(entry)
+                    for entry in sorted(catalogue)
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n"
+
+    banner("HXC STRENGTHENED STRUCTURE PROJECT")
     for relative, content in files.items():
         path = ROOT / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         raw = content.encode("utf-8")
         print(
@@ -1493,7 +2646,7 @@ def build(env: dict[str, str]) -> None:
 
 def main() -> None:
     # Deliberately ignore sys.argv because Colab injects `-f kernel.json`.
-    banner("HXC AI NOVEL STRUCTURE INVENTOR V2")
+    banner("HXC AI NOVEL STRUCTURE INVENTOR V4 - LEAN WITNESS HARDENED")
     print(f"Order:           {ORDER}", flush=True)
     print(f"Seed:            {SEED}", flush=True)
     print(f"Samples:         {SAMPLES:,}", flush=True)
@@ -1537,8 +2690,26 @@ def main() -> None:
         ("So", "Sm", "Sk", "Sc"),
     )
 
-    banner("PHASE 1 - GENERATE AND DEDUPLICATE STRUCTURES")
-    candidate, statistics = search_novel_structure(rng)
+    banner("PHASE 1 - BUILD COMPLETE SMALL-ORDER CATALOGUES")
+    catalogues, catalogue_metadata = build_complete_catalogues()
+    print(
+        f"Catalogue completeness: {catalogue_metadata['complete']}",
+        flush=True,
+    )
+    for name in sorted(catalogue_metadata["counts"]):
+        print(
+            f"{name:<22} "
+            f"classes={catalogue_metadata['counts'][name]:>5} "
+            f"sha256={catalogue_metadata['hashes'][name]}",
+            flush=True,
+        )
+
+    banner("PHASE 2 - GENERATE, CLASSIFY, AND REJECT KNOWN CLASSES")
+    candidate, statistics = search_novel_structure(
+        rng,
+        catalogues,
+        catalogue_metadata,
+    )
     print(
         f"Isomorphism classes seen: {statistics['isomorphism_classes_seen']:,}",
         flush=True,
@@ -1548,7 +2719,7 @@ def main() -> None:
         flush=True,
     )
 
-    banner("PHASE 2 - SELECT RARE LAW FINGERPRINT")
+    banner("PHASE 3 - SELECT STRUCTURALLY RICH SURVIVOR")
     print(
         f"Structure: {structure_glyph.symbol} "
         f"[{structure_glyph.codepoint}; {structure_glyph.name}]",
@@ -1564,9 +2735,36 @@ def main() -> None:
         f"[{symmetry_glyph.codepoint}; {symmetry_glyph.name}]",
         flush=True,
     )
-    print(f"Novelty score:          {candidate.score:.6f}", flush=True)
+    print(f"Structural score:       {candidate.score:.6f}", flush=True)
     print(
-        f"Fingerprint frequency:  {candidate.fingerprint_frequency}",
+        "Exploration frequency: "
+        f"{candidate.exploration_fingerprint_frequency} "
+        "(reported only; excluded from score)",
+        flush=True,
+    )
+    print(
+        "Classification:         "
+        + ", ".join(candidate.classifications),
+        flush=True,
+    )
+    print(
+        "Row supports:           "
+        + str(candidate.metrics["row_supports"]),
+        flush=True,
+    )
+    print(
+        "Column supports:        "
+        + str(candidate.metrics["column_supports"]),
+        flush=True,
+    )
+    print(
+        "Normalised entropy:     "
+        f"{candidate.metrics['normalised_entropy']:.6f}",
+        flush=True,
+    )
+    print(
+        "Projection distance:    "
+        f"{candidate.metrics['minimum_projection_distance']:.6f}",
         flush=True,
     )
     print(
@@ -1579,7 +2777,7 @@ def main() -> None:
         flush=True,
     )
 
-    banner("PHASE 3 - CONJECTURE ATTACK")
+    banner("PHASE 4 - CONJECTURE ATTACK")
     for law in ("commutative", "associative", "left_alternative", "medial"):
         if bool(candidate.properties[law]):
             print(f"Retained: {law}", flush=True)
@@ -1591,6 +2789,7 @@ def main() -> None:
         candidate,
         statistics,
         unicode_pool,
+        catalogues,
         structure_glyph,
         operation_glyph,
         symmetry_glyph,
@@ -1609,7 +2808,7 @@ def main() -> None:
     env = install_or_reuse_lean()
     build(env)
 
-    banner("HXC NOVEL STRUCTURE: KERNEL VERIFIED")
+    banner("HXC V4 STRUCTURE: KERNEL VERIFIED")
     print(f"Formal project: {ROOT}", flush=True)
     print(f"Lean source:    {ROOT / 'HXCNovel.lean'}", flush=True)
     print(
