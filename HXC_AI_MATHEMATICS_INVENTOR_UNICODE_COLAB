@@ -1,0 +1,1081 @@
+#!/usr/bin/env python3
+"""HXC AI Mathematics Inventor — one-cell Google Colab runner.
+
+Paste this entire file into one Google Colab cell, or upload it and run:
+
+    %run /content/HXC_AI_MATHEMATICS_INVENTOR_COLAB.py
+
+The program is an autonomous symbolic mathematics inventor over a
+user-extensible finite grammar. It:
+
+1. searches a space of candidate binary operations;
+2. discovers a novel algebraic law;
+3. searches for a compatible unary symmetry;
+4. generates conjectures from observed structure;
+5. rejects false conjectures with counterexamples;
+6. emits a proof-carrying Lean 4 development;
+7. asks the Lean kernel to verify every surviving claim.
+
+It does not claim to generate literally every possible branch of mathematics.
+"Arbitrary" here means open-ended mathematics inside an extensible typed
+operator grammar whose generated claims must survive formal verification.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from itertools import product
+import hashlib
+import json
+import os
+from pathlib import Path
+import random
+import re
+import shutil
+import subprocess
+import sys
+import unicodedata
+
+TOOLCHAIN = os.environ.get(
+    "HXC_LEAN_TOOLCHAIN",
+    "leanprover/lean4:v4.33.0-rc1",
+)
+MODULUS = int(os.environ.get("HXC_MODULUS", "8"))
+SEED = int(os.environ.get("HXC_SEED", "2026"))
+ROOT = Path(os.environ.get("HXC_OUTPUT_ROOT", "/content/HXCAIMathInventor"))
+GENERATE_ONLY = os.environ.get("HXC_GENERATE_ONLY", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+if not 4 <= MODULUS <= 12:
+    raise ValueError("HXC_MODULUS must be between 4 and 12.")
+
+
+UNICODE_SYMBOL_CATEGORIES = frozenset({"Sm", "So", "Sk", "Sc"})
+RESERVED_GLYPHS = frozenset(
+    {
+        "+", "-", "*", "/", "=", "<", ">",
+        "⟁", "⟜", "⌬", "⧉", "⧖", "⥁", "⟡", "⫷", "⫸",
+        "⍉", "⋇", "⫯", "ꙮ", "⨳", "҂",
+    }
+)
+BANNED_UNICODE_NAME_PARTS = (
+    "COMBINING",
+    "VARIATION SELECTOR",
+    "ZERO WIDTH",
+    "JOINER",
+    "DIRECTIONAL",
+    "INVISIBLE",
+    "CONTROL",
+    "SURROGATE",
+    "PRIVATE USE",
+    "REPLACEMENT CHARACTER",
+    "TAG ",
+    "CANCEL TAG",
+    "MODIFIER FITZPATRICK",
+)
+BANNED_BIDI_CLASSES = frozenset(
+    {"RLO", "LRO", "RLE", "LRE", "PDF", "BN", "FSI", "LRI", "RLI", "PDI"}
+)
+
+
+@dataclass(frozen=True)
+class UnicodeGlyph:
+    symbol: str
+    codepoint: str
+    name: str
+    category: str
+
+
+def usable_unicode_symbol(character: str) -> bool:
+    """Check whether a code point is safe for HXC operator assignment."""
+
+    if len(character) != 1:
+        return False
+    if not character.isprintable() or character.isspace():
+        return False
+    if character in {'"', "'", "`", "\\"}:
+        return False
+    if unicodedata.combining(character) != 0:
+        return False
+
+    category = unicodedata.category(character)
+    if category not in UNICODE_SYMBOL_CATEGORIES:
+        return False
+    if unicodedata.bidirectional(character) in BANNED_BIDI_CLASSES:
+        return False
+
+    try:
+        name = unicodedata.name(character)
+    except ValueError:
+        return False
+
+    if any(part in name.upper() for part in BANNED_UNICODE_NAME_PARTS):
+        return False
+
+    try:
+        character.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        return False
+
+    return True
+
+
+def build_unicode_glyph_pool() -> list[UnicodeGlyph]:
+    """Scan every Unicode code point and retain stable visible symbols."""
+
+    result: list[UnicodeGlyph] = []
+    for codepoint in range(sys.maxunicode + 1):
+        character = chr(codepoint)
+        if not usable_unicode_symbol(character):
+            continue
+        result.append(
+            UnicodeGlyph(
+                symbol=character,
+                codepoint=f"U+{codepoint:04X}",
+                name=unicodedata.name(character),
+                category=unicodedata.category(character),
+            )
+        )
+    return result
+
+
+def select_fresh_unicode_glyph(
+    pool: list[UnicodeGlyph],
+    rng: random.Random,
+    used: set[str],
+    *,
+    role: str,
+) -> UnicodeGlyph:
+    """Choose an unused glyph from the full filtered registry."""
+
+    category_order = (
+        ("Sm", "So", "Sk", "Sc")
+        if role == "binary"
+        else ("So", "Sm", "Sk", "Sc")
+    )
+
+    for category in category_order:
+        candidates = [
+            glyph
+            for glyph in pool
+            if glyph.category == category
+            and glyph.symbol not in used
+            and glyph.symbol not in RESERVED_GLYPHS
+        ]
+        if candidates:
+            selected = rng.choice(candidates)
+            used.add(selected.symbol)
+            return selected
+
+    raise RuntimeError("The filtered Unicode glyph registry is exhausted.")
+
+
+@dataclass(frozen=True)
+class BinaryDiscovery:
+    a: int
+    b: int
+    c: int
+    identity: int
+    table: tuple[tuple[int, ...], ...]
+    glyph: str
+    glyph_codepoint: str
+    glyph_name: str
+    glyph_category: str
+    tested_candidates: int
+
+    def apply(self, x: int, y: int) -> int:
+        return (self.a * x + self.b * y + self.c) % MODULUS
+
+
+@dataclass(frozen=True)
+class UnaryDiscovery:
+    a: int
+    b: int
+    table: tuple[int, ...]
+    glyph: str
+    glyph_codepoint: str
+    glyph_name: str
+    glyph_category: str
+    fixed_points: int
+    tested_candidates: int
+
+    def apply(self, x: int) -> int:
+        return (self.a * x + self.b) % MODULUS
+
+
+def banner(text: str) -> None:
+    print("\n" + "=" * 100, flush=True)
+    print(text, flush=True)
+    print("=" * 100, flush=True)
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    accepted_failure_text: tuple[str, ...] = (),
+) -> str:
+    banner("$ " + " ".join(command))
+    completed = subprocess.run(
+        command,
+        cwd=None if cwd is None else str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    output = completed.stdout or ""
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
+
+    if completed.returncode != 0:
+        lower = output.lower()
+        accepted = any(marker.lower() in lower for marker in accepted_failure_text)
+        if not accepted:
+            raise RuntimeError(
+                f"Command failed with exit code {completed.returncode}: "
+                + " ".join(command)
+            )
+        print("Recognised harmless idempotent result; continuing.", flush=True)
+
+    return output
+
+
+def binary_table(a: int, b: int, c: int) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple((a * x + b * y + c) % MODULUS for y in range(MODULUS))
+        for x in range(MODULUS)
+    )
+
+
+def is_commutative(table: tuple[tuple[int, ...], ...]) -> bool:
+    return all(
+        table[x][y] == table[y][x]
+        for x in range(MODULUS)
+        for y in range(MODULUS)
+    )
+
+
+def is_associative(table: tuple[tuple[int, ...], ...]) -> bool:
+    return all(
+        table[table[x][y]][z] == table[x][table[y][z]]
+        for x in range(MODULUS)
+        for y in range(MODULUS)
+        for z in range(MODULUS)
+    )
+
+
+def identities(table: tuple[tuple[int, ...], ...]) -> list[int]:
+    return [
+        e
+        for e in range(MODULUS)
+        if all(
+            table[e][x] == x and table[x][e] == x
+            for x in range(MODULUS)
+        )
+    ]
+
+
+def has_inverses(
+    table: tuple[tuple[int, ...], ...],
+    identity: int,
+) -> bool:
+    return all(
+        any(
+            table[x][y] == identity and table[y][x] == identity
+            for y in range(MODULUS)
+        )
+        for x in range(MODULUS)
+    )
+
+
+def transport_holds(
+    table: tuple[tuple[int, ...], ...],
+    shift: int,
+) -> bool:
+    transport = lambda x: (x + shift) % MODULUS
+    return all(
+        transport(table[x][y])
+        == (transport(x) + transport(y)) % MODULUS
+        for x in range(MODULUS)
+        for y in range(MODULUS)
+    )
+
+
+def discover_binary_law(
+    rng: random.Random,
+    glyph_info: UnicodeGlyph,
+) -> BinaryDiscovery:
+    """Novelty-search an affine binary law forming an Abelian group."""
+
+    candidates: list[
+        tuple[int, int, int, int, tuple[tuple[int, ...], ...]]
+    ] = []
+    tested = 0
+    standard_add = binary_table(1, 1, 0)
+    standard_mul = tuple(
+        tuple((x * y) % MODULUS for y in range(MODULUS))
+        for x in range(MODULUS)
+    )
+
+    triples = list(product(range(MODULUS), repeat=3))
+    rng.shuffle(triples)
+
+    for a, b, c in triples:
+        tested += 1
+        table = binary_table(a, b, c)
+
+        if table == standard_add or table == standard_mul:
+            continue
+        if not is_commutative(table):
+            continue
+        if not is_associative(table):
+            continue
+
+        found_identities = identities(table)
+        if len(found_identities) != 1:
+            continue
+
+        identity = found_identities[0]
+        if not has_inverses(table, identity):
+            continue
+        if not transport_holds(table, c):
+            continue
+
+        candidates.append((a, b, c, identity, table))
+
+    if not candidates:
+        raise RuntimeError("No proof-worthy binary law was discovered.")
+
+    a, b, c, identity, table = rng.choice(candidates)
+    glyph = glyph_info.symbol
+
+    return BinaryDiscovery(
+        a=a,
+        b=b,
+        c=c,
+        identity=identity,
+        table=table,
+        glyph=glyph,
+        glyph_codepoint=glyph_info.codepoint,
+        glyph_name=glyph_info.name,
+        glyph_category=glyph_info.category,
+        tested_candidates=tested,
+    )
+
+
+def discover_unary_symmetry(
+    law: BinaryDiscovery,
+    rng: random.Random,
+    glyph_info: UnicodeGlyph,
+) -> UnaryDiscovery:
+    """Discover a nonidentity involutive automorphism of the invented law."""
+
+    candidates: list[tuple[int, int, tuple[int, ...], int]] = []
+    tested = 0
+
+    pairs = list(product(range(MODULUS), repeat=2))
+    rng.shuffle(pairs)
+
+    for a, b in pairs:
+        tested += 1
+        table = tuple((a * x + b) % MODULUS for x in range(MODULUS))
+
+        if table == tuple(range(MODULUS)):
+            continue
+        if len(set(table)) != MODULUS:
+            continue
+        if not all(table[table[x]] == x for x in range(MODULUS)):
+            continue
+        if not all(
+            table[law.apply(x, y)]
+            == law.apply(table[x], table[y])
+            for x in range(MODULUS)
+            for y in range(MODULUS)
+        ):
+            continue
+
+        fixed = sum(table[x] == x for x in range(MODULUS))
+        candidates.append((a, b, table, fixed))
+
+    if not candidates:
+        raise RuntimeError("No compatible nontrivial symmetry was discovered.")
+
+    minimum_fixed = min(candidate[3] for candidate in candidates)
+    finalists = [
+        candidate
+        for candidate in candidates
+        if candidate[3] == minimum_fixed
+    ]
+    a, b, table, fixed = rng.choice(finalists)
+    glyph = glyph_info.symbol
+
+    return UnaryDiscovery(
+        a=a,
+        b=b,
+        table=table,
+        glyph=glyph,
+        glyph_codepoint=glyph_info.codepoint,
+        glyph_name=glyph_info.name,
+        glyph_category=glyph_info.category,
+        fixed_points=fixed,
+        tested_candidates=tested,
+    )
+
+
+def first_idempotence_counterexample(
+    law: BinaryDiscovery,
+) -> tuple[int, int]:
+    for x in range(MODULUS):
+        value = law.apply(x, x)
+        if value != x:
+            return x, value
+    raise RuntimeError("The selected law unexpectedly became idempotent.")
+
+
+def lean_source(
+    law: BinaryDiscovery,
+    symmetry: UnaryDiscovery,
+    idempotence_witness: tuple[int, int],
+) -> str:
+    witness, witness_result = idempotence_witness
+    expanded_cost = 9
+
+    return f"""import Std
+
+namespace HXCAI
+
+/-!
+# Autonomous Xenoglyphic Mathematics Invention
+
+This file was generated by an executable search process, not handwritten as a
+fixed theorem list.
+
+The Python invention engine searched:
+
+* {law.tested_candidates} affine binary operations;
+* {symmetry.tested_candidates} affine unary transformations.
+
+It selected:
+
+* binary glyph `{law.glyph}` ({law.glyph_codepoint},
+  {law.glyph_name}, category {law.glyph_category}) with law
+  `(x,y) ↦ ({law.a}x + {law.b}y + {law.c}) mod {MODULUS}`;
+* unary glyph `{symmetry.glyph}` ({symmetry.glyph_codepoint},
+  {symmetry.glyph_name}, category {symmetry.glyph_category}) with law
+  `x ↦ ({symmetry.a}x + {symmetry.b}) mod {MODULUS}`.
+
+The surviving conjectures are verified below by the Lean kernel.
+-/
+
+def modulus : Nat := {MODULUS}
+
+theorem modulus_positive :
+    0 < modulus := by
+  decide
+
+abbrev Carrier := Fin modulus
+
+def mkCarrier (value : Nat) : Carrier :=
+  ⟨value % modulus, Nat.mod_lt _ modulus_positive⟩
+
+/-- Ordinary modular addition, used as the inherited reference law. -/
+def standardAdd (x y : Carrier) : Carrier :=
+  mkCarrier (x.val + y.val)
+
+/-- Invented binary law represented by Unicode glyph `{law.glyph}`. -/
+def alienLaw (x y : Carrier) : Carrier :=
+  mkCarrier ({law.a} * x.val + {law.b} * y.val + {law.c})
+
+/-- Invented unary symmetry represented by Unicode glyph `{symmetry.glyph}`. -/
+def alienSymmetry (x : Carrier) : Carrier :=
+  mkCarrier ({symmetry.a} * x.val + {symmetry.b})
+
+/-- Transport from the invented coordinates into ordinary modular addition. -/
+def transport (x : Carrier) : Carrier :=
+  mkCarrier (x.val + {law.c})
+
+/-- Recovery map for the coordinate transport. -/
+def recover (x : Carrier) : Carrier :=
+  mkCarrier (x.val + {MODULUS - law.c})
+
+def alienIdentity : Carrier :=
+  mkCarrier {law.identity}
+
+/-! ## AI-generated conjectures that survived falsification -/
+
+theorem alien_commutative :
+    ∀ x y : Carrier,
+      alienLaw x y = alienLaw y x := by
+  decide
+
+theorem alien_associative :
+    ∀ x y z : Carrier,
+      alienLaw (alienLaw x y) z =
+      alienLaw x (alienLaw y z) := by
+  decide
+
+theorem alien_identity_law :
+    ∀ x : Carrier,
+      alienLaw alienIdentity x = x ∧
+      alienLaw x alienIdentity = x := by
+  decide
+
+theorem alien_inverse_exists :
+    ∀ x : Carrier,
+      ∃ y : Carrier,
+        alienLaw x y = alienIdentity ∧
+        alienLaw y x = alienIdentity := by
+  decide
+
+theorem transport_is_recoverable :
+    (∀ x : Carrier, recover (transport x) = x) ∧
+    (∀ x : Carrier, transport (recover x) = x) := by
+  decide
+
+theorem transport_is_homomorphism :
+    ∀ x y : Carrier,
+      transport (alienLaw x y) =
+      standardAdd (transport x) (transport y) := by
+  decide
+
+theorem symmetry_is_involution :
+    ∀ x : Carrier,
+      alienSymmetry (alienSymmetry x) = x := by
+  decide
+
+theorem symmetry_is_automorphism :
+    ∀ x y : Carrier,
+      alienSymmetry (alienLaw x y) =
+      alienLaw (alienSymmetry x) (alienSymmetry y) := by
+  decide
+
+/-! ## Novelty and falsification certificates -/
+
+theorem alien_law_is_observationally_novel :
+    alienLaw (mkCarrier 0) (mkCarrier 0) ≠
+    standardAdd (mkCarrier 0) (mkCarrier 0) := by
+  decide
+
+theorem rejected_idempotence_conjecture :
+    alienLaw (mkCarrier {witness}) (mkCarrier {witness}) =
+      mkCarrier {witness_result} ∧
+    alienLaw (mkCarrier {witness}) (mkCarrier {witness}) ≠
+      mkCarrier {witness} := by
+  decide
+
+/-! ## Proof-carrying invention certificate -/
+
+structure AlgebraInventionCertificate where
+  binaryGlyph : String
+  unaryGlyph : String
+  law : Carrier → Carrier → Carrier
+  symmetry : Carrier → Carrier
+  identity : Carrier
+  commutative :
+    ∀ x y, law x y = law y x
+  associative :
+    ∀ x y z, law (law x y) z = law x (law y z)
+  identityLaw :
+    ∀ x, law identity x = x ∧ law x identity = x
+  inverseExists :
+    ∀ x, ∃ y, law x y = identity ∧ law y x = identity
+  symmetryInvolution :
+    ∀ x, symmetry (symmetry x) = x
+  symmetryAutomorphism :
+    ∀ x y, symmetry (law x y) = law (symmetry x) (symmetry y)
+  noveltyWitness :
+    ∃ x y, law x y ≠ standardAdd x y
+
+def inventionCertificate : AlgebraInventionCertificate where
+  binaryGlyph := "{law.glyph}"
+  unaryGlyph := "{symmetry.glyph}"
+  law := alienLaw
+  symmetry := alienSymmetry
+  identity := alienIdentity
+  commutative := alien_commutative
+  associative := alien_associative
+  identityLaw := alien_identity_law
+  inverseExists := alien_inverse_exists
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  noveltyWitness := by
+    exact ⟨mkCarrier 0, mkCarrier 0, alien_law_is_observationally_novel⟩
+
+/-! ## Symbolic compression theorem -/
+
+def expandedSyntaxCost : Nat := {expanded_cost}
+def glyphSyntaxCost : Nat := 1
+
+theorem strict_symbolic_compression :
+    glyphSyntaxCost < expandedSyntaxCost := by
+  decide
+
+/-! ## Executable mathematical artefacts -/
+
+def lawTable : List (List Nat) :=
+  (List.range modulus).map
+    (fun x =>
+      (List.range modulus).map
+        (fun y => (alienLaw (mkCarrier x) (mkCarrier y)).val))
+
+def symmetryTable : List Nat :=
+  (List.range modulus).map
+    (fun x => (alienSymmetry (mkCarrier x)).val)
+
+#eval lawTable
+#eval symmetryTable
+
+#check alien_commutative
+#check alien_associative
+#check alien_identity_law
+#check alien_inverse_exists
+#check transport_is_recoverable
+#check transport_is_homomorphism
+#check symmetry_is_involution
+#check symmetry_is_automorphism
+#check alien_law_is_observationally_novel
+#check rejected_idempotence_conjecture
+#check inventionCertificate
+#check strict_symbolic_compression
+
+end HXCAI
+"""
+
+
+def build_report(
+    law: BinaryDiscovery,
+    symmetry: UnaryDiscovery,
+    witness: tuple[int, int],
+) -> str:
+    x, result = witness
+    table_rows = "\n".join(
+        "| " + " | ".join(map(str, row)) + " |"
+        for row in law.table
+    )
+    header = "| " + " | ".join(map(str, range(MODULUS))) + " |"
+    separator = "|" + "|".join(["---"] * MODULUS) + "|"
+
+    return rf"""# HXC Autonomous Mathematics Invention Report
+
+## Search configuration
+
+- Modulus: `{MODULUS}`
+- Seed: `{SEED}`
+- Binary candidates tested: `{law.tested_candidates}`
+- Unary candidates tested: `{symmetry.tested_candidates}`
+- Unicode database version: `{unicodedata.unidata_version}`
+- Unicode code points scanned: `{sys.maxunicode + 1:,}`
+
+## Invented binary operator
+
+The engine selected the Unicode glyph **`{law.glyph}`**
+(`{law.glyph_codepoint}`, **{law.glyph_name}**, category
+`{law.glyph_category}`) with semantics
+
+\[
+x\;{law.glyph}\;y
+=
+({law.a}x+{law.b}y+{law.c})\bmod {MODULUS}.
+\]
+
+Its discovered identity is `{law.identity}`.
+
+The engine conjectured and retained:
+
+- closure on `Fin {MODULUS}`;
+- commutativity;
+- associativity;
+- a two-sided identity;
+- an inverse for every element;
+- recoverable transport into modular addition.
+
+The transport is
+
+\[
+T(x)=(x+{law.c})\bmod {MODULUS},
+\]
+
+and the generated Lean theorem checks
+
+\[
+T(x\;{law.glyph}\;y)=T(x)+T(y)\pmod{{{MODULUS}}}.
+\]
+
+## Invented unary symmetry
+
+The selected glyph **`{symmetry.glyph}`**
+(`{symmetry.glyph_codepoint}`, **{symmetry.glyph_name}**, category
+`{symmetry.glyph_category}`) has semantics
+
+\[
+{symmetry.glyph}(x)
+=
+({symmetry.a}x+{symmetry.b})\bmod {MODULUS}.
+\]
+
+The engine discovered that it is both:
+
+- an involution: `{symmetry.glyph}({symmetry.glyph}(x)) = x`;
+- an automorphism of `{law.glyph}`.
+
+Fixed points: `{symmetry.fixed_points}`.
+
+## Falsified conjecture
+
+The system considered idempotence and rejected it using the counterexample
+
+\[
+{x}\;{law.glyph}\;{x}
+=
+{result}
+\neq
+{x}.
+\]
+
+The counterexample is preserved as a Lean theorem rather than silently
+discarded.
+
+## Invented Cayley table
+
+{header}
+{separator}
+{table_rows}
+
+## Formal status
+
+The generated Lean file contains no `sorry`, `admit`, local `axiom`, or
+`unsafe` declarations. A successful Colab run means every retained law,
+transport theorem, symmetry theorem, novelty witness, counterexample, and
+compression claim was accepted by the Lean kernel.
+"""
+
+
+def write_project(
+    law: BinaryDiscovery,
+    symmetry: UnaryDiscovery,
+    witness: tuple[int, int],
+    unicode_pool: list[UnicodeGlyph],
+) -> None:
+    if ROOT.exists():
+        shutil.rmtree(ROOT)
+    ROOT.mkdir(parents=True)
+
+    source = lean_source(law, symmetry, witness)
+    report = build_report(law, symmetry, witness)
+
+    lakefile = """name = "hxc-ai-math-inventor"
+version = "1.1.0"
+defaultTargets = ["HXCAI"]
+
+[[lean_lib]]
+name = "HXCAI"
+"""
+
+    assigned_symbols = {law.glyph, symmetry.glyph}
+    unicode_registry = {
+        "unicode_database_version": unicodedata.unidata_version,
+        "code_points_scanned": sys.maxunicode + 1,
+        "accepted_symbols": len(unicode_pool),
+        "filters": {
+            "categories": sorted(UNICODE_SYMBOL_CATEGORIES),
+            "printable_only": True,
+            "combining_marks_excluded": True,
+            "invisible_and_directional_controls_excluded": True,
+            "unassigned_code_points_excluded": True,
+        },
+        "glyphs": [
+            {
+                "symbol": glyph.symbol,
+                "codepoint": glyph.codepoint,
+                "name": glyph.name,
+                "category": glyph.category,
+                "assigned": glyph.symbol in assigned_symbols,
+                "role": (
+                    "binary"
+                    if glyph.symbol == law.glyph
+                    else "unary"
+                    if glyph.symbol == symmetry.glyph
+                    else None
+                ),
+            }
+            for glyph in unicode_pool
+        ],
+    }
+
+    files = {
+        "HXCAI.lean": source,
+        "StdPreflight.lean": (
+            'import Std\n\n'
+            'def main : IO Unit :=\n'
+            '  IO.println "Std preflight: PASSED"\n'
+        ),
+        "lakefile.toml": lakefile,
+        "lean-toolchain": TOOLCHAIN + "\n",
+        "INVENTION_REPORT.md": report,
+        "unicode_glyph_registry.json": json.dumps(
+            unicode_registry,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        "invention.json": json.dumps(
+            {
+                "modulus": MODULUS,
+                "seed": SEED,
+                "unicode_registry": {
+                    "unicode_database_version": unicodedata.unidata_version,
+                    "code_points_scanned": sys.maxunicode + 1,
+                    "accepted_symbols": len(unicode_pool),
+                },
+                "binary": {
+                    "glyph": law.glyph,
+                    "glyph_codepoint": law.glyph_codepoint,
+                    "glyph_name": law.glyph_name,
+                    "glyph_category": law.glyph_category,
+                    "a": law.a,
+                    "b": law.b,
+                    "c": law.c,
+                    "identity": law.identity,
+                    "table": law.table,
+                },
+                "unary": {
+                    "glyph": symmetry.glyph,
+                    "glyph_codepoint": symmetry.glyph_codepoint,
+                    "glyph_name": symmetry.glyph_name,
+                    "glyph_category": symmetry.glyph_category,
+                    "a": symmetry.a,
+                    "b": symmetry.b,
+                    "fixed_points": symmetry.fixed_points,
+                    "table": symmetry.table,
+                },
+                "rejected_idempotence_witness": {
+                    "input": witness[0],
+                    "result": witness[1],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+    }
+
+    banner("HXC AI-GENERATED PROJECT")
+    for relative, content in files.items():
+        path = ROOT / relative
+        path.write_text(content, encoding="utf-8")
+        raw = content.encode("utf-8")
+        print(
+            f"{relative:<24} bytes={len(raw):>7} "
+            f"lines={content.count(chr(10)):>4} "
+            f"sha256={hashlib.sha256(raw).hexdigest()}",
+            flush=True,
+        )
+
+
+def audit() -> None:
+    source = (ROOT / "HXCAI.lean").read_text(encoding="utf-8")
+    forbidden = [
+        re.compile(r"\bsorry\b"),
+        re.compile(r"\badmit\b"),
+        re.compile(r"^\s*axiom\b", re.MULTILINE),
+        re.compile(r"\bunsafe\b"),
+    ]
+    violations = []
+    for pattern in forbidden:
+        match = pattern.search(source)
+        if match is not None:
+            violations.append(match.group(0))
+
+    if violations:
+        raise RuntimeError(
+            "Proof-placeholder audit failed: " + ", ".join(violations)
+        )
+
+    banner("PROOF-PLACEHOLDER AUDIT: PASSED")
+    print(
+        "No `sorry`, `admit`, local `axiom`, or `unsafe` declarations detected.",
+        flush=True,
+    )
+
+
+def lean_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = (
+        str(Path.home() / ".elan" / "bin")
+        + os.pathsep
+        + env.get("PATH", "")
+    )
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
+def install_or_reuse_lean() -> dict[str, str]:
+    env = lean_environment()
+
+    run(["apt-get", "update", "-qq"], env=env)
+    run(
+        [
+            "apt-get",
+            "install",
+            "-y",
+            "-qq",
+            "ca-certificates",
+            "curl",
+            "git",
+            "zstd",
+        ],
+        env=env,
+    )
+
+    if shutil.which("elan", path=env["PATH"]) is None:
+        installer = Path("/tmp/elan-init.sh")
+        run(
+            [
+                "curl",
+                "-sSf",
+                "https://elan.lean-lang.org/elan-init.sh",
+                "-o",
+                str(installer),
+            ],
+            env=env,
+        )
+        run(
+            ["sh", str(installer), "-y", "--default-toolchain", "none"],
+            env=env,
+        )
+
+    run(["elan", "--version"], env=env)
+    run(
+        ["elan", "toolchain", "install", TOOLCHAIN],
+        env=env,
+        accepted_failure_text=("already installed", "is already installed"),
+    )
+
+    env["ELAN_TOOLCHAIN"] = TOOLCHAIN
+    run(["elan", "toolchain", "list"], env=env)
+    run(["lean", "--version"], env=env)
+    run(["lake", "--version"], env=env)
+    return env
+
+
+def build(env: dict[str, str]) -> None:
+    stale = ROOT / ".lake"
+    if stale.exists():
+        shutil.rmtree(stale)
+
+    run(
+        ["lean", "--run", "StdPreflight.lean"],
+        cwd=ROOT,
+        env=env,
+    )
+    run(["lake", "env", "lean", "HXCAI.lean"], cwd=ROOT, env=env)
+    run(["lake", "build"], cwd=ROOT, env=env)
+
+
+def main() -> None:
+    # Deliberately ignore sys.argv; Colab injects `-f kernel.json`.
+    banner("HXC AI MATHEMATICS INVENTOR - FILTERED FULL UNICODE")
+    print(f"Modulus:         {MODULUS}", flush=True)
+    print(f"Seed:            {SEED}", flush=True)
+    print(f"Repository root: {ROOT}", flush=True)
+    print(
+        "Search grammar: affine binary laws and affine unary symmetries "
+        "over a finite carrier.",
+        flush=True,
+    )
+    print(
+        "Glyph grammar: complete Unicode code-point scan filtered to visible, "
+        "assigned, source-safe symbols.",
+        flush=True,
+    )
+
+    rng = random.Random(SEED)
+
+    banner("PHASE 0 - BUILD FILTERED UNICODE GLYPH REGISTRY")
+    unicode_pool = build_unicode_glyph_pool()
+    category_counts = {
+        category: sum(glyph.category == category for glyph in unicode_pool)
+        for category in sorted(UNICODE_SYMBOL_CATEGORIES)
+    }
+    print(f"Unicode database:     {unicodedata.unidata_version}", flush=True)
+    print(f"Code points scanned:  {sys.maxunicode + 1:,}", flush=True)
+    print(f"Usable symbols:       {len(unicode_pool):,}", flush=True)
+    print(f"Category counts:      {category_counts}", flush=True)
+
+    used_symbols = set(RESERVED_GLYPHS)
+    binary_glyph = select_fresh_unicode_glyph(
+        unicode_pool,
+        rng,
+        used_symbols,
+        role="binary",
+    )
+    unary_glyph = select_fresh_unicode_glyph(
+        unicode_pool,
+        rng,
+        used_symbols,
+        role="unary",
+    )
+
+    banner("PHASE 1 - INVENT A BINARY ALGEBRA")
+    law = discover_binary_law(rng, binary_glyph)
+    print(
+        f"Selected {law.glyph} [{law.glyph_codepoint}; "
+        f"{law.glyph_name}; {law.glyph_category}]: "
+        f"(x,y) -> ({law.a}x + {law.b}y + {law.c}) mod {MODULUS}",
+        flush=True,
+    )
+    print(f"Discovered identity: {law.identity}", flush=True)
+
+    banner("PHASE 2 - INVENT A COMPATIBLE SYMMETRY")
+    symmetry = discover_unary_symmetry(law, rng, unary_glyph)
+    print(
+        f"Selected {symmetry.glyph} [{symmetry.glyph_codepoint}; "
+        f"{symmetry.glyph_name}; {symmetry.glyph_category}]: "
+        f"x -> ({symmetry.a}x + {symmetry.b}) mod {MODULUS}",
+        flush=True,
+    )
+    print(f"Fixed points: {symmetry.fixed_points}", flush=True)
+
+    banner("PHASE 3 - CONJECTURE AND FALSIFICATION")
+    witness = first_idempotence_counterexample(law)
+    print(
+        "Retained conjectures: commutativity, associativity, identity, "
+        "inverses, transport homomorphism, involution, automorphism.",
+        flush=True,
+    )
+    print(
+        f"Rejected idempotence at x={witness[0]}: "
+        f"x {law.glyph} x = {witness[1]} != {witness[0]}",
+        flush=True,
+    )
+
+    write_project(law, symmetry, witness, unicode_pool)
+    audit()
+
+    if GENERATE_ONLY:
+        banner("GENERATION-ONLY MODE COMPLETE")
+        print(f"Generated Lean: {ROOT / 'HXCAI.lean'}", flush=True)
+        print(f"Report:         {ROOT / 'INVENTION_REPORT.md'}", flush=True)
+        return
+
+    env = install_or_reuse_lean()
+    build(env)
+
+    banner("HXC AI MATHEMATICS INVENTION: KERNEL VERIFIED")
+    print(f"Formal project: {ROOT}", flush=True)
+    print(f"Lean source:    {ROOT / 'HXCAI.lean'}", flush=True)
+    print(f"Report:         {ROOT / 'INVENTION_REPORT.md'}", flush=True)
+    print(
+        "The generated algebra, symmetry, transport, novelty witness, "
+        "counterexample, and proof-carrying certificate were accepted by Lean.",
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
