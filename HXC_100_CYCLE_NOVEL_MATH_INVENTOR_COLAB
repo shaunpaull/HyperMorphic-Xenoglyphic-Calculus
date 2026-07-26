@@ -3,7 +3,7 @@
 
 Paste this entire script into one Google Colab cell, or upload it and run:
 
-    %run /content/HXC_100_CYCLE_NOVELTY_AUDITED_MATH_INVENTOR_COLAB_V9.py
+    %run /content/HXC_100_CYCLE_NOVELTY_AUDITED_MATH_INVENTOR_COLAB_V10.py
 
 This system runs the complete HXC discovery pipeline repeatedly. Each cycle
 constructs a non-degenerate finite operation, rejects known catalogues and
@@ -57,7 +57,7 @@ CYCLES = int(os.environ.get("HXC_CYCLES", "100"))
 RUN_ROOT = Path(
     os.environ.get(
         "HXC_OUTPUT_ROOT",
-        "/content/HXC100CycleNovelMathV9",
+        "/content/HXC100CycleNovelMathV10",
     )
 )
 # ROOT is deliberately mutable. Every cycle points it at its own Lake project.
@@ -101,7 +101,7 @@ IDENTITY_MODEL_LIMIT = int(
     os.environ.get("HXC_IDENTITY_MODEL_LIMIT", "480")
 )
 IDENTITY_PAIR_LIMIT = int(
-    os.environ.get("HXC_IDENTITY_PAIR_LIMIT", "80")
+    os.environ.get("HXC_IDENTITY_PAIR_LIMIT", "240")
 )
 IDENTITY_VARIABLES = ("x", "y", "z", "w")
 
@@ -112,7 +112,7 @@ if IDENTITY_MODEL_LIMIT < 64:
 if CYCLES < 1:
     raise ValueError("HXC_CYCLES must be at least 1.")
 
-MAX_CYCLE_RETRIES = int(os.environ.get("HXC_MAX_CYCLE_RETRIES", "5"))
+MAX_CYCLE_RETRIES = int(os.environ.get("HXC_MAX_CYCLE_RETRIES", "20"))
 RESUME_RUN = os.environ.get("HXC_RESUME", "1").lower() not in {
     "0", "false", "no"
 }
@@ -149,10 +149,22 @@ SMALL_MODEL_SEARCH_LIMIT = int(
     os.environ.get("HXC_SMALL_MODEL_SEARCH_LIMIT", "1024")
 )
 EXHAUSTIVE_SMALL_MODEL_SEARCH = os.environ.get(
-    "HXC_EXHAUSTIVE_SMALL_MODEL_SEARCH", "0"
+    "HXC_EXHAUSTIVE_SMALL_MODEL_SEARCH", "1"
 ).lower() in {"1", "true", "yes"}
 INDEPENDENCE_CANDIDATE_LIMIT = int(
-    os.environ.get("HXC_INDEPENDENCE_CANDIDATE_LIMIT", "80")
+    os.environ.get("HXC_INDEPENDENCE_CANDIDATE_LIMIT", "240")
+)
+IDENTITY_SEARCH_ROUNDS_PER_STRUCTURE = int(
+    os.environ.get("HXC_IDENTITY_SEARCH_ROUNDS_PER_STRUCTURE", "4")
+)
+IDENTITY_ROUND_SEED_STRIDE = int(
+    os.environ.get("HXC_IDENTITY_ROUND_SEED_STRIDE", "7919")
+)
+ORDER4_INDEPENDENCE_RANDOM_ATTEMPTS = int(
+    os.environ.get("HXC_ORDER4_INDEPENDENCE_RANDOM_ATTEMPTS", "20000")
+)
+ORDER4_INDEPENDENCE_MODEL_LIMIT = int(
+    os.environ.get("HXC_ORDER4_INDEPENDENCE_MODEL_LIMIT", "2048")
 )
 DOWNLOAD_NOVELTY_DATABASES = os.environ.get(
     "HXC_DOWNLOAD_NOVELTY_DATABASES", "1"
@@ -808,64 +820,189 @@ def find_positive_law_countermodel(
     return None
 
 
+
+ORDER4_LAW_MODEL_CACHE: dict[
+    tuple[str, ...],
+    tuple[tuple[tuple[int, ...], ...], ...],
+] = {}
+
+
+def random_table_respecting_easy_laws(
+    order: int,
+    laws: tuple[str, ...],
+    rng: random.Random,
+) -> tuple[tuple[int, ...], ...]:
+    """Generate a random table while building in cheap syntactic laws.
+
+    This does not assume the harder laws. The finished table is still checked
+    against every advertised law before it can enter the witness pool.
+    """
+    commutative = "commutative" in laws
+    idempotent = "idempotent" in laws
+    table = [[0 for _ in range(order)] for _ in range(order)]
+
+    if commutative:
+        for x in range(order):
+            for y in range(x, order):
+                value = x if idempotent and x == y else rng.randrange(order)
+                table[x][y] = value
+                table[y][x] = value
+    else:
+        for x in range(order):
+            for y in range(order):
+                table[x][y] = x if idempotent and x == y else rng.randrange(order)
+
+    return tuple(tuple(row) for row in table)
+
+
+def order4_positive_law_models(
+    catalogues: dict[str, set[tuple[int, ...]]],
+    positive_laws: tuple[str, ...],
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
+    """Return all loaded order-4 catalogue/reference models sharing the laws."""
+    cached = ORDER4_LAW_MODEL_CACHE.get(positive_laws)
+    if cached is not None:
+        return cached
+
+    seen: set[tuple[int, ...]] = set()
+    models: list[tuple[tuple[int, ...], ...]] = []
+
+    def add(table: tuple[tuple[int, ...], ...]) -> None:
+        flattened = flatten_table(table)
+        if flattened in seen:
+            return
+        if all(generic_law_holds(table, law) for law in positive_laws):
+            seen.add(flattened)
+            models.append(table)
+
+    for table in reference_library().values():
+        add(table)
+
+    for name, entries in sorted(catalogues.items()):
+        if name == "core_references":
+            continue
+        for flattened in sorted(entries):
+            add(unflatten_table(flattened))
+
+    result = tuple(models)
+    ORDER4_LAW_MODEL_CACHE[positive_laws] = result
+    return result
+
+
+def candidate_counterexample_from_models(
+    lhs: Term,
+    rhs: Term,
+    models: list[tuple[int, tuple[tuple[int, ...], ...]]],
+) -> tuple[int, tuple[tuple[int, ...], ...], tuple[int, int, int, int]] | None:
+    for order, table in models:
+        witness = identity_counterexample_on_table(lhs, rhs, table)
+        if witness is not None:
+            return order, table, witness
+    return None
+
+
 def find_positive_law_countermodel_batch(
     ranked: list[dict[str, object]],
     positive_laws: tuple[str, ...],
-) -> tuple[dict[str, object], tuple[int, tuple[tuple[int, ...], ...], tuple[int, int, int, int]]] | None:
-    """Find a concrete independence witness without repeated model scans.
+    catalogues: dict[str, set[tuple[int, ...]]],
+    model_bank: list[tuple[tuple[str, ...], tuple[tuple[int, ...], ...]]],
+    rng: random.Random,
+    target_table: tuple[tuple[int, ...], ...],
+) -> tuple[
+    dict[str, object],
+    tuple[int, tuple[tuple[int, ...], ...], tuple[int, int, int, int]],
+] | None:
+    """Select the highest-ranked identity with a concrete law-package model.
 
-    Candidate identities are ordered by novelty score. For each finite model
-    satisfying the advertised law package, all candidate terms are evaluated
-    once. The first highest-ranked candidate falsified by a model is returned.
+    V9 only searched a capped sample of order-3 models. V10 searches in tiers:
+
+    1. every loaded order-4 catalogue/reference model sharing the laws;
+    2. every law-sharing model already present in the 480-model bank;
+    3. exhaustive order-2 and order-3 models by default, cached by law package;
+    4. targeted random order-4 models that syntactically respect easy laws.
+
+    Candidates are considered in score order, so the returned theorem is the
+    strongest-ranked candidate for which an actual independence witness exists.
     """
     candidates = ranked[:INDEPENDENCE_CANDIDATE_LIMIT]
-    participating_terms = {
-        term
-        for item in candidates
-        for term in (item["lhs"], item["rhs"])
-        if isinstance(term, Term)
-    }
+    target_flat = flatten_table(target_table)
+    seen: set[tuple[int, ...]] = {target_flat}
+    common_models: list[tuple[int, tuple[tuple[int, ...], ...]]] = []
 
+    def add(order: int, table: tuple[tuple[int, ...], ...]) -> None:
+        flattened = flatten_table(table)
+        if flattened in seen:
+            return
+        if all(generic_law_holds(table, law) for law in positive_laws):
+            seen.add(flattened)
+            common_models.append((order, table))
+
+    # The most relevant and cheapest witnesses come first.
+    for table in order4_positive_law_models(catalogues, positive_laws):
+        add(ORDER, table)
+
+    for _, table in model_bank:
+        add(len(table), table)
+
+    # A countermodel in a loaded neighbouring family is already sufficient to
+    # prove non-implication, so try those before enumerating all order-3 tables.
+    for item in candidates:
+        lhs = item["lhs"]
+        rhs = item["rhs"]
+        assert isinstance(lhs, Term) and isinstance(rhs, Term)
+        witness = candidate_counterexample_from_models(lhs, rhs, common_models)
+        if witness is not None:
+            return item, witness
+
+    # Exact finite search. Order 3 has only 3^9 = 19,683 operation tables and
+    # the satisfying-model list is cached for repeated positive-law packages.
+    exact_models: list[tuple[int, tuple[tuple[int, ...], ...]]] = []
     for order in range(2, SMALL_COUNTERMODEL_MAX_ORDER + 1):
-        assignments = generic_identity_assignments(order)
-        satisfying_examined = 0
-        for flattened in product(range(order), repeat=order * order):
-            table = tuple(
-                tuple(flattened[row * order + column] for column in range(order))
-                for row in range(order)
-            )
-            if not all(generic_law_holds(table, law) for law in positive_laws):
-                continue
-            satisfying_examined += 1
-            memo: dict[Term, tuple[int, ...]] = {}
-            vectors = {
-                term: term_vector(term, table, assignments, memo)
-                for term in participating_terms
-            }
-            for item in candidates:
-                lhs = item["lhs"]
-                rhs = item["rhs"]
-                assert isinstance(lhs, Term) and isinstance(rhs, Term)
-                left_vector = vectors[lhs]
-                right_vector = vectors[rhs]
-                witness_index = next(
-                    (
-                        index
-                        for index, (left_value, right_value) in enumerate(
-                            zip(left_vector, right_vector, strict=True)
-                        )
-                        if left_value != right_value
-                    ),
-                    None,
-                )
-                if witness_index is not None:
-                    return item, (order, table, assignments[witness_index])
-            if (
-                not EXHAUSTIVE_SMALL_MODEL_SEARCH
-                and order >= 3
-                and satisfying_examined >= SMALL_MODEL_SEARCH_LIMIT
-            ):
-                break
+        satisfying = enumerate_small_models_satisfying(order, positive_laws)
+        if (
+            not EXHAUSTIVE_SMALL_MODEL_SEARCH
+            and order >= 3
+            and len(satisfying) > SMALL_MODEL_SEARCH_LIMIT
+        ):
+            satisfying = satisfying[:SMALL_MODEL_SEARCH_LIMIT]
+        for table in satisfying:
+            add(order, table)
+            exact_models.append((order, table))
+
+    # `add` stores into common_models, including the exact additions.
+    for item in candidates:
+        lhs = item["lhs"]
+        rhs = item["rhs"]
+        assert isinstance(lhs, Term) and isinstance(rhs, Term)
+        witness = candidate_counterexample_from_models(lhs, rhs, common_models)
+        if witness is not None:
+            return item, witness
+
+    # Final targeted order-4 search. Build in commutativity/idempotence when
+    # requested, then verify the complete package before testing identities.
+    accepted_random = 0
+    random_models: list[tuple[int, tuple[tuple[int, ...], ...]]] = []
+    for _ in range(ORDER4_INDEPENDENCE_RANDOM_ATTEMPTS):
+        table = random_table_respecting_easy_laws(ORDER, positive_laws, rng)
+        flattened = flatten_table(table)
+        if flattened in seen:
+            continue
+        if not all(generic_law_holds(table, law) for law in positive_laws):
+            continue
+        seen.add(flattened)
+        random_models.append((ORDER, table))
+        accepted_random += 1
+        if accepted_random >= ORDER4_INDEPENDENCE_MODEL_LIMIT:
+            break
+
+    for item in candidates:
+        lhs = item["lhs"]
+        rhs = item["rhs"]
+        assert isinstance(lhs, Term) and isinstance(rhs, Term)
+        witness = candidate_counterexample_from_models(lhs, rhs, random_models)
+        if witness is not None:
+            return item, witness
+
     return None
 
 
@@ -1311,7 +1448,14 @@ def discover_symbolic_identity(
     if not ranked:
         raise RuntimeError("No identity survived catalogue/database novelty gates.")
 
-    batch_result = find_positive_law_countermodel_batch(ranked, positive_laws)
+    batch_result = find_positive_law_countermodel_batch(
+        ranked,
+        positive_laws,
+        catalogues,
+        model_bank,
+        rng,
+        candidate.table,
+    )
     if batch_result is not None:
         selected, independence_result = batch_result
     elif REQUIRE_IDENTITY_INDEPENDENCE:
@@ -3915,7 +4059,7 @@ def write_project(
     )
 
     lakefile = """name = "hxc-novel-structure-inventor"
-version = "9.0.0"
+version = "10.0.0"
 defaultTargets = ["HXCNovel"]
 
 [[lean_lib]]
@@ -4743,7 +4887,7 @@ def summary_from_record(
 def main() -> None:
     global ROOT, SEED
 
-    banner("HXC 100-CYCLE NOVELTY-AUDITED MATH INVENTOR V9")
+    banner("HXC 100-CYCLE NOVELTY-AUDITED MATH INVENTOR V10")
     print(f"Cycles requested:       {CYCLES}", flush=True)
     print(f"Order:                  {ORDER}", flush=True)
     print(f"Base seed:              {BASE_SEED}", flush=True)
@@ -4752,7 +4896,21 @@ def main() -> None:
     print(f"Comparison models:      {IDENTITY_MODEL_LIMIT:,}", flush=True)
     print(f"Require catalogue fail: {REQUIRE_CATALOGUE_COUNTERMODEL}", flush=True)
     print(f"Require law independence: {REQUIRE_IDENTITY_INDEPENDENCE}", flush=True)
-    print(f"Small-model search cap: {SMALL_MODEL_SEARCH_LIMIT} (exhaustive={EXHAUSTIVE_SMALL_MODEL_SEARCH})", flush=True)
+    print(
+        f"Small-model search cap: {SMALL_MODEL_SEARCH_LIMIT} "
+        f"(exhaustive={EXHAUSTIVE_SMALL_MODEL_SEARCH})",
+        flush=True,
+    )
+    print(
+        f"Identity rounds/structure: {IDENTITY_SEARCH_ROUNDS_PER_STRUCTURE}",
+        flush=True,
+    )
+    print(
+        "Order-4 law-model fallback: "
+        f"{ORDER4_INDEPENDENCE_RANDOM_ATTEMPTS:,} attempts / "
+        f"{ORDER4_INDEPENDENCE_MODEL_LIMIT:,} accepted",
+        flush=True,
+    )
     print(f"Verify every cycle:     {VERIFY_EACH_CYCLE and not GENERATE_ONLY}", flush=True)
     print(f"Resume enabled:         {RESUME_RUN}", flush=True)
     print(f"Run root:               {RUN_ROOT}", flush=True)
@@ -4901,14 +5059,56 @@ def main() -> None:
                     excluded_canonical_up_to_opposite=used_canonical,
                 )
 
-                identity = discover_symbolic_identity(
-                    candidate,
-                    catalogues,
-                    rng,
-                    operation_glyph,
-                    equation_databases,
-                    excluded_identity_codes=used_identity_codes,
-                )
+                identity = None
+                identity_errors: list[str] = []
+                for identity_round in range(
+                    1,
+                    IDENTITY_SEARCH_ROUNDS_PER_STRUCTURE + 1,
+                ):
+                    identity_seed = (
+                        cycle_seed
+                        + identity_round * IDENTITY_ROUND_SEED_STRIDE
+                    )
+                    identity_rng = random.Random(identity_seed)
+                    try:
+                        identity = discover_symbolic_identity(
+                            candidate,
+                            catalogues,
+                            identity_rng,
+                            operation_glyph,
+                            equation_databases,
+                            excluded_identity_codes=used_identity_codes,
+                        )
+                        if identity_round > 1:
+                            print(
+                                "Identity search succeeded on round "
+                                f"{identity_round}/"
+                                f"{IDENTITY_SEARCH_ROUNDS_PER_STRUCTURE}.",
+                                flush=True,
+                            )
+                        break
+                    except RuntimeError as identity_error:
+                        message = str(identity_error)
+                        identity_errors.append(message)
+                        if (
+                            "No identity" not in message
+                            and "lacked a catalogue-neighbour" not in message
+                        ):
+                            raise
+                        print(
+                            "Identity search round "
+                            f"{identity_round}/"
+                            f"{IDENTITY_SEARCH_ROUNDS_PER_STRUCTURE} rejected: "
+                            f"{message}",
+                            flush=True,
+                        )
+
+                if identity is None:
+                    raise RuntimeError(
+                        "Identity search exhausted all rounds for this "
+                        "structure. Last result: "
+                        + (identity_errors[-1] if identity_errors else "unknown")
+                    )
 
                 print(
                     f"Unicode: {structure_glyph.symbol} "
@@ -5085,7 +5285,7 @@ def main() -> None:
             except Exception as error:
                 last_error = f"{type(error).__name__}: {error}"
                 banner(
-                    f"CYCLE {cycle_number:03d} ATTEMPT {attempt} FAILED"
+                    f"CYCLE {cycle_number:03d} ATTEMPT {attempt} REJECTED/FAILED"
                 )
                 print(last_error, flush=True)
                 write_json(
