@@ -2820,3 +2820,65 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+========================================================================================================
+$ lean --run StdPreflight.lean
+========================================================================================================
+Std preflight: PASSED
+
+========================================================================================================
+$ lake env lean HXCNovel.lean
+========================================================================================================
+info: hxc-novel-structure-inventor: no previous manifest, creating one from scratch
+info: toolchain not updated; already up-to-date
+[[1, 2, 0, 0], [2, 0, 1, 1], [0, 1, 2, 3], [3, 3, 2, 3]]
+[1, 0, 2, 3]
+HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+HXCNovel.noveltyCertificate : NovelStructureCertificate
+HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 3) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 3))
+HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+
+========================================================================================================
+$ lake build
+========================================================================================================
+ℹ [2/3] Built HXCNovel (4.9s)
+info: HXCNovel.lean:555:0: [[1, 2, 0, 0], [2, 0, 1, 1], [0, 1, 2, 3], [3, 3, 2, 3]]
+info: HXCNovel.lean:556:0: [1, 0, 2, 3]
+info: HXCNovel.lean:558:0: HXCNovel.relabeling_registry_size : allRelabelings.length = 24
+info: HXCNovel.lean:559:0: HXCNovel.relabeling_registry_nodup : allRelabelings.Nodup
+info: HXCNovel.lean:560:0: HXCNovel.every_registered_relabeling_is_injective : allRelabelings.all relabelingInjective = true
+info: HXCNovel.lean:561:0: HXCNovel.every_row_depends_on_right_argument (x : Carrier) : ∃ y z, alienLaw x y ≠ alienLaw x z
+info: HXCNovel.lean:562:0: HXCNovel.every_column_depends_on_left_argument (y : Carrier) : ∃ x z, alienLaw x y ≠ alienLaw z y
+info: HXCNovel.lean:563:0: HXCNovel.alien_not_left_shelf : ¬IsLeftShelf alienLaw
+info: HXCNovel.lean:564:0: HXCNovel.alien_not_right_shelf : ¬IsRightShelf alienLaw
+info: HXCNovel.lean:565:0: HXCNovel.alien_not_quasigroup : ¬IsQuasigroup alienLaw
+info: HXCNovel.lean:566:0: HXCNovel.noveltyCertificate : NovelStructureCertificate
+info: HXCNovel.lean:567:0: HXCNovel.symmetry_is_automorphism (x y : Carrier) :
+  alienSymmetry (alienLaw x y) = alienLaw (alienSymmetry x) (alienSymmetry y)
+info: HXCNovel.lean:568:0: HXCNovel.rejected_associativity :
+  alienLaw (alienLaw (mkCarrier 0) (mkCarrier 1)) (mkCarrier 3) ≠
+    alienLaw (mkCarrier 0) (alienLaw (mkCarrier 1) (mkCarrier 3))
+info: HXCNovel.lean:569:0: HXCNovel.alien_not_isomorphic_to_modular_addition : ¬IsIsomorphic alienLaw modularAddition
+info: HXCNovel.lean:570:0: HXCNovel.alien_not_isomorphic_to_modular_multiplication : ¬IsIsomorphic alienLaw modularMultiplication
+Build completed successfully (3 jobs).
+
+========================================================================================================
+HXC V4 STRUCTURE: KERNEL VERIFIED
+========================================================================================================
+Formal project: /content/HXCNovelStructureInventor
+Lean source:    /content/HXCNovelStructureInventor/HXCNovel.lean
+Lean accepted the positive laws, automorphism, counterexamples, and non-isomorphism certificates.
+
