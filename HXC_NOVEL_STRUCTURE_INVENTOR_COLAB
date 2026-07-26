@@ -1,0 +1,1623 @@
+#!/usr/bin/env python3
+"""HXC Novel Structure Inventor — one-cell Google Colab runner.
+
+Paste this entire script into one Google Colab cell, or upload it and run:
+
+    %run /content/HXC_NOVEL_STRUCTURE_INVENTOR_COLAB.py
+
+This system searches arbitrary finite binary-operation tables rather than only
+affine formulas. It constructs candidate tables with a guaranteed nontrivial
+automorphism, deduplicates them up to isomorphism, rejects familiar reference
+structures, discovers laws and counterexamples, assigns fresh Unicode glyphs,
+and emits a Lean 4 proof-carrying structure certificate.
+
+Novelty is certified relative to:
+  * the explicit reference library;
+  * all isomorphism classes encountered in the current search;
+  * the selected law fingerprint among surviving candidates.
+
+That is a rigorous finite novelty claim, not a claim that the structure has
+never appeared anywhere in the mathematical literature.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import asdict, dataclass
+from itertools import permutations
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import random
+import re
+import shutil
+import subprocess
+import sys
+import unicodedata
+
+TOOLCHAIN = os.environ.get(
+    "HXC_LEAN_TOOLCHAIN",
+    "leanprover/lean4:v4.33.0-rc1",
+)
+ORDER = int(os.environ.get("HXC_ORDER", "4"))
+SEED = int(os.environ.get("HXC_SEED", "2026"))
+SAMPLES = int(os.environ.get("HXC_SAMPLES", "25000"))
+ROOT = Path(
+    os.environ.get(
+        "HXC_OUTPUT_ROOT",
+        "/content/HXCNovelStructureInventor",
+    )
+)
+GENERATE_ONLY = os.environ.get("HXC_GENERATE_ONLY", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+if not 3 <= ORDER <= 5:
+    raise ValueError("HXC_ORDER must be 3, 4, or 5.")
+if SAMPLES < 1000:
+    raise ValueError("HXC_SAMPLES must be at least 1000.")
+
+UNICODE_SYMBOL_CATEGORIES = frozenset({"Sm", "So", "Sk", "Sc"})
+RESERVED_GLYPHS = frozenset(
+    {
+        "+", "-", "*", "/", "=", "<", ">",
+        "⟁", "⟜", "⌬", "⧉", "⧖", "⥁", "⟡", "⫷", "⫸",
+        "⍉", "⋇", "⫯", "ꙮ", "⨳", "҂",
+    }
+)
+BANNED_UNICODE_NAME_PARTS = (
+    "COMBINING",
+    "VARIATION SELECTOR",
+    "ZERO WIDTH",
+    "JOINER",
+    "DIRECTIONAL",
+    "INVISIBLE",
+    "CONTROL",
+    "SURROGATE",
+    "PRIVATE USE",
+    "REPLACEMENT CHARACTER",
+    "TAG ",
+    "CANCEL TAG",
+    "MODIFIER FITZPATRICK",
+)
+BANNED_BIDI_CLASSES = frozenset(
+    {"RLO", "LRO", "RLE", "LRE", "PDF", "BN", "FSI", "LRI", "RLI", "PDI"}
+)
+
+LAW_KEYS = (
+    "commutative",
+    "associative",
+    "idempotent",
+    "flexible",
+    "left_alternative",
+    "right_alternative",
+    "medial",
+    "left_self_distributive",
+    "right_self_distributive",
+    "latin",
+    "surjective",
+)
+
+INTERESTING_LAWS = (
+    "idempotent",
+    "flexible",
+    "left_alternative",
+    "right_alternative",
+    "medial",
+    "left_self_distributive",
+    "right_self_distributive",
+    "latin",
+)
+
+
+@dataclass(frozen=True)
+class UnicodeGlyph:
+    symbol: str
+    codepoint: str
+    name: str
+    category: str
+
+
+@dataclass(frozen=True)
+class StructureCandidate:
+    table: tuple[tuple[int, ...], ...]
+    canonical: tuple[int, ...]
+    properties: dict[str, object]
+    fingerprint: tuple[object, ...]
+    entropy: float
+    interesting_law_count: int
+    sample_index: int
+    score: float = 0.0
+    fingerprint_frequency: int = 0
+
+
+def banner(text: str) -> None:
+    print("\n" + "=" * 104, flush=True)
+    print(text, flush=True)
+    print("=" * 104, flush=True)
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    accepted_failure_text: tuple[str, ...] = (),
+) -> str:
+    banner("$ " + " ".join(command))
+    completed = subprocess.run(
+        command,
+        cwd=None if cwd is None else str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    output = completed.stdout or ""
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
+
+    if completed.returncode != 0:
+        lowered = output.lower()
+        accepted = any(marker.lower() in lowered for marker in accepted_failure_text)
+        if not accepted:
+            raise RuntimeError(
+                f"Command failed with exit code {completed.returncode}: "
+                + " ".join(command)
+            )
+        print("Recognised harmless idempotent result; continuing.", flush=True)
+
+    return output
+
+
+# ---------------------------------------------------------------------------
+# Unicode glyph registry
+# ---------------------------------------------------------------------------
+
+def usable_unicode_symbol(character: str) -> bool:
+    if len(character) != 1:
+        return False
+    if not character.isprintable() or character.isspace():
+        return False
+    if character in {'"', "'", "`", "\\"}:
+        return False
+    if unicodedata.combining(character) != 0:
+        return False
+
+    category = unicodedata.category(character)
+    if category not in UNICODE_SYMBOL_CATEGORIES:
+        return False
+    if unicodedata.bidirectional(character) in BANNED_BIDI_CLASSES:
+        return False
+
+    try:
+        name = unicodedata.name(character)
+    except ValueError:
+        return False
+
+    if any(part in name.upper() for part in BANNED_UNICODE_NAME_PARTS):
+        return False
+
+    try:
+        character.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        return False
+
+    return True
+
+
+def build_unicode_glyph_pool() -> list[UnicodeGlyph]:
+    pool: list[UnicodeGlyph] = []
+    for codepoint in range(sys.maxunicode + 1):
+        symbol = chr(codepoint)
+        if not usable_unicode_symbol(symbol):
+            continue
+        pool.append(
+            UnicodeGlyph(
+                symbol=symbol,
+                codepoint=f"U+{codepoint:04X}",
+                name=unicodedata.name(symbol),
+                category=unicodedata.category(symbol),
+            )
+        )
+    return pool
+
+
+def select_fresh_glyph(
+    pool: list[UnicodeGlyph],
+    rng: random.Random,
+    used: set[str],
+    category_order: tuple[str, ...],
+) -> UnicodeGlyph:
+    for category in category_order:
+        options = [
+            glyph
+            for glyph in pool
+            if glyph.category == category
+            and glyph.symbol not in used
+            and glyph.symbol not in RESERVED_GLYPHS
+        ]
+        if options:
+            selected = rng.choice(options)
+            used.add(selected.symbol)
+            return selected
+    raise RuntimeError("Filtered Unicode glyph registry exhausted.")
+
+
+# ---------------------------------------------------------------------------
+# Finite operation tables and isomorphism
+# ---------------------------------------------------------------------------
+
+def operation_from_formula(function) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple(function(x, y) % ORDER for y in range(ORDER))
+        for x in range(ORDER)
+    )
+
+
+def reference_library() -> dict[str, tuple[tuple[int, ...], ...]]:
+    references = {
+        "left_projection": operation_from_formula(lambda x, y: x),
+        "right_projection": operation_from_formula(lambda x, y: y),
+        "constant_zero": operation_from_formula(lambda x, y: 0),
+        "modular_addition": operation_from_formula(lambda x, y: x + y),
+        "modular_multiplication": operation_from_formula(lambda x, y: x * y),
+        "modular_subtraction": operation_from_formula(
+            lambda x, y: x + ORDER - y
+        ),
+        "minimum": operation_from_formula(min),
+        "maximum": operation_from_formula(max),
+    }
+    if ORDER & (ORDER - 1) == 0:
+        references["bitwise_xor"] = operation_from_formula(lambda x, y: x ^ y)
+    return references
+
+
+PERMUTATIONS = tuple(permutations(range(ORDER)))
+
+
+def relabel_table(
+    table: tuple[tuple[int, ...], ...],
+    permutation: tuple[int, ...],
+) -> tuple[tuple[int, ...], ...]:
+    inverse = [0] * ORDER
+    for old, new in enumerate(permutation):
+        inverse[new] = old
+
+    return tuple(
+        tuple(
+            permutation[
+                table[inverse[new_x]][inverse[new_y]]
+            ]
+            for new_y in range(ORDER)
+        )
+        for new_x in range(ORDER)
+    )
+
+
+def canonical_form(
+    table: tuple[tuple[int, ...], ...],
+) -> tuple[int, ...]:
+    return min(
+        tuple(value for row in relabel_table(table, permutation) for value in row)
+        for permutation in PERMUTATIONS
+    )
+
+
+def symmetry_permutation() -> tuple[int, ...]:
+    # A nontrivial involution. It swaps 0 and 1 and fixes all other elements.
+    return tuple([1, 0] + list(range(2, ORDER)))
+
+
+def generate_equivariant_table(
+    rng: random.Random,
+    automorphism: tuple[int, ...],
+) -> tuple[tuple[int, ...], ...]:
+    """Generate an arbitrary table that is equivariant under an involution."""
+
+    table = [[-1 for _ in range(ORDER)] for _ in range(ORDER)]
+    fixed_outputs = [
+        value
+        for value in range(ORDER)
+        if automorphism[value] == value
+    ]
+
+    # ORDER=3 still has one fixed output; ORDER>=4 has at least two.
+    if not fixed_outputs:
+        raise RuntimeError("Chosen automorphism has no fixed outputs.")
+
+    for x in range(ORDER):
+        for y in range(ORDER):
+            if table[x][y] != -1:
+                continue
+
+            tx = automorphism[x]
+            ty = automorphism[y]
+
+            if (tx, ty) == (x, y):
+                value = rng.choice(fixed_outputs)
+                table[x][y] = value
+            else:
+                value = rng.randrange(ORDER)
+                table[x][y] = value
+                table[tx][ty] = automorphism[value]
+
+    return tuple(tuple(row) for row in table)
+
+
+# ---------------------------------------------------------------------------
+# Law discovery and falsification
+# ---------------------------------------------------------------------------
+
+def analyse_properties(
+    table: tuple[tuple[int, ...], ...],
+) -> dict[str, object]:
+    elements = range(ORDER)
+
+    properties: dict[str, object] = {
+        "commutative": all(
+            table[x][y] == table[y][x]
+            for x in elements
+            for y in elements
+        ),
+        "associative": all(
+            table[table[x][y]][z] == table[x][table[y][z]]
+            for x in elements
+            for y in elements
+            for z in elements
+        ),
+        "idempotent": all(
+            table[x][x] == x
+            for x in elements
+        ),
+        "flexible": all(
+            table[x][table[y][x]] == table[table[x][y]][x]
+            for x in elements
+            for y in elements
+        ),
+        "left_alternative": all(
+            table[x][table[x][y]] == table[table[x][x]][y]
+            for x in elements
+            for y in elements
+        ),
+        "right_alternative": all(
+            table[table[x][y]][y] == table[x][table[y][y]]
+            for x in elements
+            for y in elements
+        ),
+        "medial": all(
+            table[table[x][y]][table[z][w]]
+            == table[table[x][z]][table[y][w]]
+            for x in elements
+            for y in elements
+            for z in elements
+            for w in elements
+        ),
+        "left_self_distributive": all(
+            table[x][table[y][z]]
+            == table[table[x][y]][table[x][z]]
+            for x in elements
+            for y in elements
+            for z in elements
+        ),
+        "right_self_distributive": all(
+            table[table[x][y]][z]
+            == table[table[x][z]][table[y][z]]
+            for x in elements
+            for y in elements
+            for z in elements
+        ),
+        "latin": (
+            all(
+                len({table[x][y] for y in elements}) == ORDER
+                for x in elements
+            )
+            and all(
+                len({table[x][y] for x in elements}) == ORDER
+                for y in elements
+            )
+        ),
+        "surjective": (
+            len(
+                {
+                    table[x][y]
+                    for x in elements
+                    for y in elements
+                }
+            )
+            == ORDER
+        ),
+    }
+
+    properties["left_identity"] = next(
+        (
+            identity
+            for identity in elements
+            if all(table[identity][x] == x for x in elements)
+        ),
+        None,
+    )
+    properties["right_identity"] = next(
+        (
+            identity
+            for identity in elements
+            if all(table[x][identity] == x for x in elements)
+        ),
+        None,
+    )
+
+    return properties
+
+
+def law_fingerprint(properties: dict[str, object]) -> tuple[object, ...]:
+    return (
+        *(bool(properties[key]) for key in LAW_KEYS),
+        properties["left_identity"] is not None,
+        properties["right_identity"] is not None,
+    )
+
+
+def output_entropy(table: tuple[tuple[int, ...], ...]) -> float:
+    counts = Counter(value for row in table for value in row)
+    total = ORDER * ORDER
+    return -sum(
+        (count / total) * math.log2(count / total)
+        for count in counts.values()
+    )
+
+
+def first_counterexample(
+    table: tuple[tuple[int, ...], ...],
+    law: str,
+) -> tuple[int, ...] | None:
+    elements = range(ORDER)
+
+    if law == "commutative":
+        for x in elements:
+            for y in elements:
+                if table[x][y] != table[y][x]:
+                    return (x, y)
+
+    if law == "associative":
+        for x in elements:
+            for y in elements:
+                for z in elements:
+                    if table[table[x][y]][z] != table[x][table[y][z]]:
+                        return (x, y, z)
+
+    if law == "left_alternative":
+        for x in elements:
+            for y in elements:
+                if table[x][table[x][y]] != table[table[x][x]][y]:
+                    return (x, y)
+
+    if law == "right_alternative":
+        for x in elements:
+            for y in elements:
+                if table[table[x][y]][y] != table[x][table[y][y]]:
+                    return (x, y)
+
+    if law == "medial":
+        for x in elements:
+            for y in elements:
+                for z in elements:
+                    for w in elements:
+                        if (
+                            table[table[x][y]][table[z][w]]
+                            != table[table[x][z]][table[y][w]]
+                        ):
+                            return (x, y, z, w)
+
+    return None
+
+
+def search_novel_structure(
+    rng: random.Random,
+) -> tuple[StructureCandidate, dict[str, int]]:
+    automorphism = symmetry_permutation()
+    references = reference_library()
+    reference_canonical = {
+        name: canonical_form(table)
+        for name, table in references.items()
+    }
+    reference_classes = set(reference_canonical.values())
+
+    seen_classes: set[tuple[int, ...]] = set()
+    candidates: list[StructureCandidate] = []
+
+    for sample_index in range(SAMPLES):
+        table = generate_equivariant_table(rng, automorphism)
+        canonical = canonical_form(table)
+
+        if canonical in seen_classes:
+            continue
+        seen_classes.add(canonical)
+
+        if canonical in reference_classes:
+            continue
+
+        properties = analyse_properties(table)
+        interesting_count = sum(
+            bool(properties[key])
+            for key in INTERESTING_LAWS
+        )
+
+        if not bool(properties["surjective"]):
+            continue
+        if bool(properties["associative"]):
+            continue
+        if interesting_count < 2:
+            continue
+
+        candidates.append(
+            StructureCandidate(
+                table=table,
+                canonical=canonical,
+                properties=properties,
+                fingerprint=law_fingerprint(properties),
+                entropy=output_entropy(table),
+                interesting_law_count=interesting_count,
+                sample_index=sample_index,
+            )
+        )
+
+    if not candidates:
+        raise RuntimeError(
+            "No qualifying structure found. Increase HXC_SAMPLES or change HXC_SEED."
+        )
+
+    frequencies = Counter(candidate.fingerprint for candidate in candidates)
+    scored: list[StructureCandidate] = []
+
+    for candidate in candidates:
+        properties = candidate.properties
+        frequency = frequencies[candidate.fingerprint]
+        one_sided_identity = (
+            (properties["left_identity"] is None)
+            != (properties["right_identity"] is None)
+        )
+
+        score = (
+            4.0 * candidate.interesting_law_count
+            + 2.0 * candidate.entropy
+            + 3.0 * (not bool(properties["commutative"]))
+            + 2.0 * one_sided_identity
+            + 5.0 / frequency
+        )
+
+        scored.append(
+            StructureCandidate(
+                table=candidate.table,
+                canonical=candidate.canonical,
+                properties=candidate.properties,
+                fingerprint=candidate.fingerprint,
+                entropy=candidate.entropy,
+                interesting_law_count=candidate.interesting_law_count,
+                sample_index=candidate.sample_index,
+                score=score,
+                fingerprint_frequency=frequency,
+            )
+        )
+
+    selected = max(
+        scored,
+        key=lambda candidate: (
+            candidate.score,
+            candidate.interesting_law_count,
+            candidate.entropy,
+            -candidate.sample_index,
+        ),
+    )
+
+    statistics = {
+        "samples_requested": SAMPLES,
+        "isomorphism_classes_seen": len(seen_classes),
+        "qualifying_classes": len(candidates),
+        "reference_classes": len(reference_classes),
+    }
+    return selected, statistics
+
+
+# ---------------------------------------------------------------------------
+# Lean source generation
+# ---------------------------------------------------------------------------
+
+def lean_operation_definition(
+    table: tuple[tuple[int, ...], ...],
+) -> str:
+    def row_expression(x: int) -> str:
+        parts: list[str] = []
+        for y in range(ORDER - 1):
+            parts.append(
+                f"if y.val = {y} then mkCarrier {table[x][y]} else "
+            )
+        parts.append(f"mkCarrier {table[x][ORDER - 1]}")
+        return "".join(parts)
+
+    lines = [
+        "def alienLaw (x y : Carrier) : Carrier :=",
+    ]
+    for x in range(ORDER - 1):
+        lines.append(
+            f"  if x.val = {x} then {row_expression(x)}"
+        )
+        lines.append("  else")
+    lines.append(f"    {row_expression(ORDER - 1)}")
+    return "\n".join(lines)
+
+
+def lean_symmetry_definition(
+    automorphism: tuple[int, ...],
+) -> str:
+    lines = ["def alienSymmetry (x : Carrier) : Carrier :="]
+    for x in range(ORDER - 1):
+        lines.append(
+            f"  if x.val = {x} then mkCarrier {automorphism[x]}"
+        )
+        lines.append("  else")
+    lines.append(f"    mkCarrier {automorphism[ORDER - 1]}")
+    return "\n".join(lines)
+
+
+def lean_true_law_theorems(properties: dict[str, object]) -> str:
+    theorem_templates = {
+        "commutative": """theorem alien_commutative :
+    ∀ x y : Carrier, alienLaw x y = alienLaw y x := by
+  decide
+""",
+        "associative": """theorem alien_associative :
+    ∀ x y z : Carrier,
+      alienLaw (alienLaw x y) z = alienLaw x (alienLaw y z) := by
+  decide
+""",
+        "idempotent": """theorem alien_idempotent :
+    ∀ x : Carrier, alienLaw x x = x := by
+  decide
+""",
+        "flexible": """theorem alien_flexible :
+    ∀ x y : Carrier,
+      alienLaw x (alienLaw y x) = alienLaw (alienLaw x y) x := by
+  decide
+""",
+        "left_alternative": """theorem alien_left_alternative :
+    ∀ x y : Carrier,
+      alienLaw x (alienLaw x y) = alienLaw (alienLaw x x) y := by
+  decide
+""",
+        "right_alternative": """theorem alien_right_alternative :
+    ∀ x y : Carrier,
+      alienLaw (alienLaw x y) y = alienLaw x (alienLaw y y) := by
+  decide
+""",
+        "medial": """theorem alien_medial :
+    ∀ x y z w : Carrier,
+      alienLaw (alienLaw x y) (alienLaw z w) =
+      alienLaw (alienLaw x z) (alienLaw y w) := by
+  decide
+""",
+        "left_self_distributive": """theorem alien_left_self_distributive :
+    ∀ x y z : Carrier,
+      alienLaw x (alienLaw y z) =
+      alienLaw (alienLaw x y) (alienLaw x z) := by
+  decide
+""",
+        "right_self_distributive": """theorem alien_right_self_distributive :
+    ∀ x y z : Carrier,
+      alienLaw (alienLaw x y) z =
+      alienLaw (alienLaw x z) (alienLaw y z) := by
+  decide
+""",
+        "latin": """theorem alien_latin :
+    (∀ x a : Carrier, ∃! y : Carrier, alienLaw x y = a) ∧
+    (∀ y a : Carrier, ∃! x : Carrier, alienLaw x y = a) := by
+  decide
+""",
+        "surjective": """theorem alien_surjective :
+    ∀ target : Carrier, ∃ x y : Carrier, alienLaw x y = target := by
+  decide
+""",
+    }
+
+    selected = [
+        theorem_templates[key]
+        for key in LAW_KEYS
+        if bool(properties[key])
+    ]
+    return "\n".join(selected)
+
+
+def lean_identity_theorems(properties: dict[str, object]) -> str:
+    blocks: list[str] = []
+
+    left_identity = properties["left_identity"]
+    right_identity = properties["right_identity"]
+
+    if left_identity is not None:
+        blocks.append(
+            f"""def alienLeftIdentity : Carrier := mkCarrier {left_identity}
+
+theorem alien_left_identity :
+    ∀ x : Carrier, alienLaw alienLeftIdentity x = x := by
+  decide
+"""
+        )
+    else:
+        blocks.append(
+            """theorem alien_has_no_left_identity :
+    ¬ ∃ identity : Carrier, ∀ x : Carrier, alienLaw identity x = x := by
+  decide
+"""
+        )
+
+    if right_identity is not None:
+        blocks.append(
+            f"""def alienRightIdentity : Carrier := mkCarrier {right_identity}
+
+theorem alien_right_identity :
+    ∀ x : Carrier, alienLaw x alienRightIdentity = x := by
+  decide
+"""
+        )
+    else:
+        blocks.append(
+            """theorem alien_has_no_right_identity :
+    ¬ ∃ identity : Carrier, ∀ x : Carrier, alienLaw x identity = x := by
+  decide
+"""
+        )
+
+    return "\n".join(blocks)
+
+
+def lean_counterexample_theorems(
+    table: tuple[tuple[int, ...], ...],
+    properties: dict[str, object],
+) -> str:
+    blocks: list[str] = []
+
+    if not bool(properties["commutative"]):
+        witness = first_counterexample(table, "commutative")
+        assert witness is not None
+        x, y = witness
+        blocks.append(
+            f"""theorem rejected_commutativity :
+    alienLaw (mkCarrier {x}) (mkCarrier {y}) ≠
+    alienLaw (mkCarrier {y}) (mkCarrier {x}) := by
+  decide
+"""
+        )
+
+    if not bool(properties["associative"]):
+        witness = first_counterexample(table, "associative")
+        assert witness is not None
+        x, y, z = witness
+        blocks.append(
+            f"""theorem rejected_associativity :
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {y}))
+      (mkCarrier {z}) ≠
+    alienLaw
+      (mkCarrier {x})
+      (alienLaw (mkCarrier {y}) (mkCarrier {z})) := by
+  decide
+"""
+        )
+
+    if not bool(properties["left_alternative"]):
+        witness = first_counterexample(table, "left_alternative")
+        if witness is not None:
+            x, y = witness
+            blocks.append(
+                f"""theorem rejected_left_alternative :
+    alienLaw
+      (mkCarrier {x})
+      (alienLaw (mkCarrier {x}) (mkCarrier {y})) ≠
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {x}))
+      (mkCarrier {y}) := by
+  decide
+"""
+            )
+
+    if not bool(properties["medial"]):
+        witness = first_counterexample(table, "medial")
+        if witness is not None:
+            x, y, z, w = witness
+            blocks.append(
+                f"""theorem rejected_mediality :
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {y}))
+      (alienLaw (mkCarrier {z}) (mkCarrier {w})) ≠
+    alienLaw
+      (alienLaw (mkCarrier {x}) (mkCarrier {z}))
+      (alienLaw (mkCarrier {y}) (mkCarrier {w})) := by
+  decide
+"""
+            )
+
+    return "\n".join(blocks)
+
+
+def reference_definitions() -> str:
+    return """def leftProjection (x _ : Carrier) : Carrier := x
+def rightProjection (_ y : Carrier) : Carrier := y
+def constantZero (_ _ : Carrier) : Carrier := mkCarrier 0
+def modularAddition (x y : Carrier) : Carrier := mkCarrier (x.val + y.val)
+def modularMultiplication (x y : Carrier) : Carrier := mkCarrier (x.val * y.val)
+def modularSubtraction (x y : Carrier) : Carrier :=
+  mkCarrier (x.val + order - y.val)
+def minimumLaw (x y : Carrier) : Carrier := mkCarrier (min x.val y.val)
+def maximumLaw (x y : Carrier) : Carrier := mkCarrier (max x.val y.val)
+"""
+
+
+
+def lean_relabeling_universe() -> str:
+    """Generate every carrier permutation as an explicit Lean constructor.
+
+    This avoids asking Lean to synthesize decidability for an existential over
+    arbitrary functions. The resulting checker ranges over exactly ORDER!
+    generated relabellings.
+    """
+
+    permutations_list = list(PERMUTATIONS)
+    constructor_names = [f"p{index}" for index in range(len(permutations_list))]
+
+    inductive_lines = [
+        "inductive Relabeling where",
+        *[f"  | {name}" for name in constructor_names],
+        "deriving DecidableEq, Repr",
+        "",
+    ]
+
+    def carrier_expression(permutation: tuple[int, ...]) -> str:
+        pieces: list[str] = []
+        for source_value in range(ORDER - 1):
+            pieces.append(
+                f"if x.val = {source_value} then "
+                f"mkCarrier {permutation[source_value]} else "
+            )
+        pieces.append(f"mkCarrier {permutation[ORDER - 1]}")
+        return "".join(pieces)
+
+    apply_lines = [
+        "def applyRelabeling : Relabeling → Carrier → Carrier",
+    ]
+    for name, permutation in zip(
+        constructor_names,
+        permutations_list,
+        strict=True,
+    ):
+        apply_lines.append(
+            f"  | .{name}, x => {carrier_expression(permutation)}"
+        )
+    apply_lines.append("")
+
+    registry_items = ", ".join(f".{name}" for name in constructor_names)
+    registry_lines = [
+        "def allRelabelings : List Relabeling :=",
+        f"  [{registry_items}]",
+        "",
+        "def relabelingInjective (relabel : Relabeling) : Bool :=",
+        "  (List.range order).all",
+        "    (fun x =>",
+        "      (List.range order).all",
+        "        (fun y =>",
+        "          if applyRelabeling relabel (mkCarrier x) ==",
+        "              applyRelabeling relabel (mkCarrier y) then",
+        "            x == y",
+        "          else",
+        "            true))",
+        "",
+        "theorem relabeling_registry_size :",
+        f"    allRelabelings.length = {len(permutations_list)} := by",
+        "  decide",
+        "",
+        "theorem relabeling_registry_nodup :",
+        "    allRelabelings.Nodup := by",
+        "  decide",
+        "",
+        "theorem every_registered_relabeling_is_injective :",
+        "    allRelabelings.all relabelingInjective = true := by",
+        "  decide",
+        "",
+        "def preservesOperation",
+        "    (relabel : Relabeling)",
+        "    (first second : Carrier → Carrier → Carrier) :",
+        "    Bool :=",
+        "  (List.range order).all",
+        "    (fun x =>",
+        "      (List.range order).all",
+        "        (fun y =>",
+        "          applyRelabeling relabel",
+        "              (first (mkCarrier x) (mkCarrier y)) ==",
+        "            second",
+        "              (applyRelabeling relabel (mkCarrier x))",
+        "              (applyRelabeling relabel (mkCarrier y))))",
+        "",
+        "def isomorphicBool",
+        "    (first second : Carrier → Carrier → Carrier) :",
+        "    Bool :=",
+        "  allRelabelings.any",
+        "    (fun relabel => preservesOperation relabel first second)",
+        "",
+        "/--",
+        "Finite isomorphism over the explicitly generated complete permutation",
+        "registry. The Python generator emits every permutation of the carrier;",
+        "Lean verifies the registry size, absence of duplicates, injectivity of",
+        "every entry, and every operation-preservation check.",
+        "-/",
+        "def IsIsomorphic",
+        "    (first second : Carrier → Carrier → Carrier) :",
+        "    Prop :=",
+        "  isomorphicBool first second = true",
+        "",
+    ]
+
+    return "\n".join(inductive_lines + apply_lines + registry_lines)
+
+
+def nonisomorphism_theorems() -> str:
+    references = (
+        ("left_projection", "leftProjection"),
+        ("right_projection", "rightProjection"),
+        ("constant_zero", "constantZero"),
+        ("modular_addition", "modularAddition"),
+        ("modular_multiplication", "modularMultiplication"),
+        ("modular_subtraction", "modularSubtraction"),
+        ("minimum", "minimumLaw"),
+        ("maximum", "maximumLaw"),
+    )
+
+    blocks = []
+    for theorem_suffix, lean_name in references:
+        blocks.append(
+            f"""theorem alien_not_isomorphic_to_{theorem_suffix} :
+    ¬ IsIsomorphic alienLaw {lean_name} := by
+  change isomorphicBool alienLaw {lean_name} ≠ true
+  decide
+"""
+        )
+    return "\n".join(blocks)
+
+
+def make_lean_source(
+    candidate: StructureCandidate,
+    structure_glyph: UnicodeGlyph,
+    operation_glyph: UnicodeGlyph,
+    symmetry_glyph: UnicodeGlyph,
+) -> str:
+    operation_definition = lean_operation_definition(candidate.table)
+    automorphism = symmetry_permutation()
+    symmetry_definition = lean_symmetry_definition(automorphism)
+    true_laws = lean_true_law_theorems(candidate.properties)
+    identity_laws = lean_identity_theorems(candidate.properties)
+    counterexamples = lean_counterexample_theorems(
+        candidate.table,
+        candidate.properties,
+    )
+    references = reference_definitions()
+    relabeling_universe = lean_relabeling_universe()
+    noniso = nonisomorphism_theorems()
+
+    true_law_names = [
+        key
+        for key in LAW_KEYS
+        if bool(candidate.properties[key])
+    ]
+
+    return f"""import Std
+
+namespace HXCNovel
+
+/-!
+# HXC AI-Generated Novel Finite Structure
+
+Structure sigil:
+* `{structure_glyph.symbol}` ({structure_glyph.codepoint},
+  {structure_glyph.name}, category {structure_glyph.category})
+
+Binary operation:
+* `{operation_glyph.symbol}` ({operation_glyph.codepoint},
+  {operation_glyph.name}, category {operation_glyph.category})
+
+Automorphism:
+* `{symmetry_glyph.symbol}` ({symmetry_glyph.codepoint},
+  {symmetry_glyph.name}, category {symmetry_glyph.category})
+
+The table was selected from arbitrary finite operation tables after:
+
+* isomorphism-class deduplication;
+* rejection of an explicit reference library;
+* rare-law fingerprint scoring;
+* counterexample search;
+* nontrivial automorphism enforcement.
+
+The formal novelty claims below are relative to the stated reference library.
+-/
+
+def order : Nat := {ORDER}
+
+theorem order_positive :
+    0 < order := by
+  decide
+
+abbrev Carrier := Fin order
+
+def mkCarrier (value : Nat) : Carrier :=
+  ⟨value % order, Nat.mod_lt _ order_positive⟩
+
+{operation_definition}
+
+{symmetry_definition}
+
+/-! ## Discovered positive laws -/
+
+{true_laws}
+
+{identity_laws}
+
+/-! ## Nontrivial symmetry -/
+
+theorem symmetry_is_involution :
+    ∀ x : Carrier, alienSymmetry (alienSymmetry x) = x := by
+  decide
+
+theorem symmetry_is_automorphism :
+    ∀ x y : Carrier,
+      alienSymmetry (alienLaw x y) =
+      alienLaw (alienSymmetry x) (alienSymmetry y) := by
+  decide
+
+theorem symmetry_is_nontrivial :
+    alienSymmetry (mkCarrier 0) ≠ mkCarrier 0 := by
+  decide
+
+/-! ## Falsified conjectures retained as counterexamples -/
+
+{counterexamples}
+
+/-! ## Reference-library non-isomorphism certificates -/
+
+{references}
+
+{relabeling_universe}
+
+{noniso}
+
+/-! ## Proof-carrying structure certificate -/
+
+structure NovelStructureCertificate where
+  structureGlyph : String
+  operationGlyph : String
+  symmetryGlyph : String
+  law : Carrier → Carrier → Carrier
+  symmetry : Carrier → Carrier
+  positiveLawNames : List String
+  symmetryInvolution :
+    ∀ x, symmetry (symmetry x) = x
+  symmetryAutomorphism :
+    ∀ x y, symmetry (law x y) = law (symmetry x) (symmetry y)
+  symmetryNontrivial :
+    symmetry (mkCarrier 0) ≠ mkCarrier 0
+  notProjectionLeft :
+    ¬ IsIsomorphic law leftProjection
+  notProjectionRight :
+    ¬ IsIsomorphic law rightProjection
+  notConstantZero :
+    ¬ IsIsomorphic law constantZero
+  notModularAddition :
+    ¬ IsIsomorphic law modularAddition
+  notModularMultiplication :
+    ¬ IsIsomorphic law modularMultiplication
+  notModularSubtraction :
+    ¬ IsIsomorphic law modularSubtraction
+  notMinimum :
+    ¬ IsIsomorphic law minimumLaw
+  notMaximum :
+    ¬ IsIsomorphic law maximumLaw
+
+def noveltyCertificate : NovelStructureCertificate where
+  structureGlyph := "{structure_glyph.symbol}"
+  operationGlyph := "{operation_glyph.symbol}"
+  symmetryGlyph := "{symmetry_glyph.symbol}"
+  law := alienLaw
+  symmetry := alienSymmetry
+  positiveLawNames := {json.dumps(true_law_names)}
+  symmetryInvolution := symmetry_is_involution
+  symmetryAutomorphism := symmetry_is_automorphism
+  symmetryNontrivial := symmetry_is_nontrivial
+  notProjectionLeft := alien_not_isomorphic_to_left_projection
+  notProjectionRight := alien_not_isomorphic_to_right_projection
+  notConstantZero := alien_not_isomorphic_to_constant_zero
+  notModularAddition := alien_not_isomorphic_to_modular_addition
+  notModularMultiplication := alien_not_isomorphic_to_modular_multiplication
+  notModularSubtraction := alien_not_isomorphic_to_modular_subtraction
+  notMinimum := alien_not_isomorphic_to_minimum
+  notMaximum := alien_not_isomorphic_to_maximum
+
+def operationTable : List (List Nat) :=
+  (List.range order).map
+    (fun x =>
+      (List.range order).map
+        (fun y => (alienLaw (mkCarrier x) (mkCarrier y)).val))
+
+def symmetryTable : List Nat :=
+  (List.range order).map
+    (fun x => (alienSymmetry (mkCarrier x)).val)
+
+#eval operationTable
+#eval symmetryTable
+
+#check relabeling_registry_size
+#check relabeling_registry_nodup
+#check every_registered_relabeling_is_injective
+#check noveltyCertificate
+#check symmetry_is_automorphism
+#check rejected_associativity
+#check alien_not_isomorphic_to_modular_addition
+#check alien_not_isomorphic_to_modular_multiplication
+
+end HXCNovel
+"""
+
+
+# ---------------------------------------------------------------------------
+# Reports and generated project
+# ---------------------------------------------------------------------------
+
+def build_report(
+    candidate: StructureCandidate,
+    statistics: dict[str, int],
+    structure_glyph: UnicodeGlyph,
+    operation_glyph: UnicodeGlyph,
+    symmetry_glyph: UnicodeGlyph,
+) -> str:
+    true_laws = [
+        key
+        for key in LAW_KEYS
+        if bool(candidate.properties[key])
+    ]
+    false_laws = [
+        key
+        for key in LAW_KEYS
+        if not bool(candidate.properties[key])
+    ]
+
+    header = "| " + " | ".join(map(str, range(ORDER))) + " |"
+    separator = "|" + "|".join(["---"] * ORDER) + "|"
+    rows = "\n".join(
+        "| " + " | ".join(map(str, row)) + " |"
+        for row in candidate.table
+    )
+
+    return f"""# HXC Novel Structure Invention Report
+
+## Structure identity
+
+- Structure sigil: `{structure_glyph.symbol}`
+- Structure code point: `{structure_glyph.codepoint}`
+- Structure Unicode name: **{structure_glyph.name}**
+- Binary operation: `{operation_glyph.symbol}`
+- Operation code point: `{operation_glyph.codepoint}`
+- Operation Unicode name: **{operation_glyph.name}**
+- Symmetry glyph: `{symmetry_glyph.symbol}`
+- Symmetry code point: `{symmetry_glyph.codepoint}`
+- Symmetry Unicode name: **{symmetry_glyph.name}**
+
+## Search
+
+- Carrier order: `{ORDER}`
+- Random seed: `{SEED}`
+- Tables sampled: `{statistics["samples_requested"]:,}`
+- Isomorphism classes encountered: `{statistics["isomorphism_classes_seen"]:,}`
+- Qualifying non-reference classes: `{statistics["qualifying_classes"]:,}`
+- Reference classes rejected: `{statistics["reference_classes"]}`
+- Selected sample index: `{candidate.sample_index:,}`
+- Selected fingerprint frequency: `{candidate.fingerprint_frequency}`
+- Novelty score: `{candidate.score:.6f}`
+- Output entropy: `{candidate.entropy:.6f}` bits
+
+## Positive laws
+
+{chr(10).join(f"- `{law}`" for law in true_laws)}
+
+## Rejected laws
+
+{chr(10).join(f"- `{law}`" for law in false_laws)}
+
+False laws are not silently discarded. The generated Lean development retains
+explicit witnesses for key failures such as associativity and commutativity.
+
+## Operation table
+
+{header}
+{separator}
+{rows}
+
+## Symmetry
+
+The generator enforced the nontrivial involution
+
+```text
+0 ↔ 1
+2 ↦ 2
+3 ↦ 3
+```
+
+adapted to the selected carrier order. Lean verifies that this map is an
+automorphism of the generated operation.
+
+## Formal novelty statement
+
+The structure is machine-certified as non-isomorphic to the following
+reference operations:
+
+- left projection;
+- right projection;
+- constant zero;
+- modular addition;
+- modular multiplication;
+- modular subtraction;
+- minimum;
+- maximum.
+
+This is a precise finite novelty claim relative to that library. It is not a
+claim that no isomorphic structure exists in any historical catalogue.
+"""
+
+
+def write_project(
+    candidate: StructureCandidate,
+    statistics: dict[str, int],
+    unicode_pool: list[UnicodeGlyph],
+    structure_glyph: UnicodeGlyph,
+    operation_glyph: UnicodeGlyph,
+    symmetry_glyph: UnicodeGlyph,
+) -> None:
+    if ROOT.exists():
+        shutil.rmtree(ROOT)
+    ROOT.mkdir(parents=True)
+
+    lean = make_lean_source(
+        candidate,
+        structure_glyph,
+        operation_glyph,
+        symmetry_glyph,
+    )
+    report = build_report(
+        candidate,
+        statistics,
+        structure_glyph,
+        operation_glyph,
+        symmetry_glyph,
+    )
+
+    lakefile = """name = "hxc-novel-structure-inventor"
+version = "2.1.0"
+defaultTargets = ["HXCNovel"]
+
+[[lean_lib]]
+name = "HXCNovel"
+roots = ["HXCNovel"]
+"""
+
+    assigned = {
+        structure_glyph.symbol: "structure",
+        operation_glyph.symbol: "binary_operation",
+        symmetry_glyph.symbol: "automorphism",
+    }
+
+    unicode_registry = {
+        "unicode_database_version": unicodedata.unidata_version,
+        "code_points_scanned": sys.maxunicode + 1,
+        "accepted_symbols": len(unicode_pool),
+        "glyphs": [
+            {
+                **asdict(glyph),
+                "assigned": glyph.symbol in assigned,
+                "role": assigned.get(glyph.symbol),
+            }
+            for glyph in unicode_pool
+        ],
+    }
+
+    record = {
+        "order": ORDER,
+        "seed": SEED,
+        "samples": SAMPLES,
+        "glyphs": {
+            "structure": asdict(structure_glyph),
+            "operation": asdict(operation_glyph),
+            "symmetry": asdict(symmetry_glyph),
+        },
+        "search_statistics": statistics,
+        "candidate": {
+            "table": candidate.table,
+            "canonical_form": candidate.canonical,
+            "properties": candidate.properties,
+            "fingerprint": candidate.fingerprint,
+            "entropy": candidate.entropy,
+            "interesting_law_count": candidate.interesting_law_count,
+            "sample_index": candidate.sample_index,
+            "score": candidate.score,
+            "fingerprint_frequency": candidate.fingerprint_frequency,
+        },
+        "reference_library": list(reference_library()),
+    }
+
+    files = {
+        "HXCNovel.lean": lean,
+        "StdPreflight.lean": (
+            'import Std\n\n'
+            'def main : IO Unit :=\n'
+            '  IO.println "Std preflight: PASSED"\n'
+        ),
+        "lakefile.toml": lakefile,
+        "lean-toolchain": TOOLCHAIN + "\n",
+        "NOVEL_STRUCTURE_REPORT.md": report,
+        "novel_structure.json": json.dumps(
+            record,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        "unicode_glyph_registry.json": json.dumps(
+            unicode_registry,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+    }
+
+    banner("HXC NOVEL-STRUCTURE PROJECT")
+    for relative, content in files.items():
+        path = ROOT / relative
+        path.write_text(content, encoding="utf-8")
+        raw = content.encode("utf-8")
+        print(
+            f"{relative:<30} bytes={len(raw):>9} "
+            f"lines={content.count(chr(10)):>5} "
+            f"sha256={hashlib.sha256(raw).hexdigest()}",
+            flush=True,
+        )
+
+
+def audit() -> None:
+    source = (ROOT / "HXCNovel.lean").read_text(encoding="utf-8")
+    patterns = (
+        re.compile(r"\bsorry\b"),
+        re.compile(r"\badmit\b"),
+        re.compile(r"^\s*axiom\b", re.MULTILINE),
+        re.compile(r"\bunsafe\b"),
+    )
+    violations = []
+    for pattern in patterns:
+        match = pattern.search(source)
+        if match is not None:
+            violations.append(match.group(0))
+
+    if violations:
+        raise RuntimeError(
+            "Proof-placeholder audit failed: " + ", ".join(violations)
+        )
+
+    banner("PROOF-PLACEHOLDER AUDIT: PASSED")
+    print(
+        "No proof placeholders, local axioms, or unsafe declarations detected.",
+        flush=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lean installation and build
+# ---------------------------------------------------------------------------
+
+def lean_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = (
+        str(Path.home() / ".elan" / "bin")
+        + os.pathsep
+        + env.get("PATH", "")
+    )
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
+def install_or_reuse_lean() -> dict[str, str]:
+    env = lean_environment()
+
+    run(["apt-get", "update", "-qq"], env=env)
+    run(
+        [
+            "apt-get",
+            "install",
+            "-y",
+            "-qq",
+            "ca-certificates",
+            "curl",
+            "git",
+            "zstd",
+        ],
+        env=env,
+    )
+
+    if shutil.which("elan", path=env["PATH"]) is None:
+        installer = Path("/tmp/elan-init.sh")
+        run(
+            [
+                "curl",
+                "-sSf",
+                "https://elan.lean-lang.org/elan-init.sh",
+                "-o",
+                str(installer),
+            ],
+            env=env,
+        )
+        run(
+            ["sh", str(installer), "-y", "--default-toolchain", "none"],
+            env=env,
+        )
+
+    run(["elan", "--version"], env=env)
+    run(
+        ["elan", "toolchain", "install", TOOLCHAIN],
+        env=env,
+        accepted_failure_text=("already installed", "is already installed"),
+    )
+
+    env["ELAN_TOOLCHAIN"] = TOOLCHAIN
+    run(["elan", "toolchain", "list"], env=env)
+    run(["lean", "--version"], env=env)
+    run(["lake", "--version"], env=env)
+    return env
+
+
+def build(env: dict[str, str]) -> None:
+    stale = ROOT / ".lake"
+    if stale.exists():
+        shutil.rmtree(stale)
+
+    run(["lean", "--run", "StdPreflight.lean"], cwd=ROOT, env=env)
+    run(["lake", "env", "lean", "HXCNovel.lean"], cwd=ROOT, env=env)
+    run(["lake", "build"], cwd=ROOT, env=env)
+
+
+# ---------------------------------------------------------------------------
+# Main autonomous loop
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    # Deliberately ignore sys.argv because Colab injects `-f kernel.json`.
+    banner("HXC AI NOVEL STRUCTURE INVENTOR V2")
+    print(f"Order:           {ORDER}", flush=True)
+    print(f"Seed:            {SEED}", flush=True)
+    print(f"Samples:         {SAMPLES:,}", flush=True)
+    print(f"Repository root: {ROOT}", flush=True)
+    print(
+        "Search universe: arbitrary finite binary-operation tables with "
+        "isomorphism rejection and proof-carrying law discovery.",
+        flush=True,
+    )
+
+    rng = random.Random(SEED)
+
+    banner("PHASE 0 - BUILD FILTERED UNICODE REGISTRY")
+    unicode_pool = build_unicode_glyph_pool()
+    category_counts = {
+        category: sum(glyph.category == category for glyph in unicode_pool)
+        for category in sorted(UNICODE_SYMBOL_CATEGORIES)
+    }
+    print(f"Unicode database:    {unicodedata.unidata_version}", flush=True)
+    print(f"Code points scanned: {sys.maxunicode + 1:,}", flush=True)
+    print(f"Usable symbols:      {len(unicode_pool):,}", flush=True)
+    print(f"Category counts:     {category_counts}", flush=True)
+
+    used = set(RESERVED_GLYPHS)
+    structure_glyph = select_fresh_glyph(
+        unicode_pool,
+        rng,
+        used,
+        ("So", "Sm", "Sk", "Sc"),
+    )
+    operation_glyph = select_fresh_glyph(
+        unicode_pool,
+        rng,
+        used,
+        ("Sm", "So", "Sk", "Sc"),
+    )
+    symmetry_glyph = select_fresh_glyph(
+        unicode_pool,
+        rng,
+        used,
+        ("So", "Sm", "Sk", "Sc"),
+    )
+
+    banner("PHASE 1 - GENERATE AND DEDUPLICATE STRUCTURES")
+    candidate, statistics = search_novel_structure(rng)
+    print(
+        f"Isomorphism classes seen: {statistics['isomorphism_classes_seen']:,}",
+        flush=True,
+    )
+    print(
+        f"Qualifying classes:       {statistics['qualifying_classes']:,}",
+        flush=True,
+    )
+
+    banner("PHASE 2 - SELECT RARE LAW FINGERPRINT")
+    print(
+        f"Structure: {structure_glyph.symbol} "
+        f"[{structure_glyph.codepoint}; {structure_glyph.name}]",
+        flush=True,
+    )
+    print(
+        f"Operation: {operation_glyph.symbol} "
+        f"[{operation_glyph.codepoint}; {operation_glyph.name}]",
+        flush=True,
+    )
+    print(
+        f"Symmetry:  {symmetry_glyph.symbol} "
+        f"[{symmetry_glyph.codepoint}; {symmetry_glyph.name}]",
+        flush=True,
+    )
+    print(f"Novelty score:          {candidate.score:.6f}", flush=True)
+    print(
+        f"Fingerprint frequency:  {candidate.fingerprint_frequency}",
+        flush=True,
+    )
+    print(
+        "Positive laws: "
+        + ", ".join(
+            key
+            for key in LAW_KEYS
+            if bool(candidate.properties[key])
+        ),
+        flush=True,
+    )
+
+    banner("PHASE 3 - CONJECTURE ATTACK")
+    for law in ("commutative", "associative", "left_alternative", "medial"):
+        if bool(candidate.properties[law]):
+            print(f"Retained: {law}", flush=True)
+        else:
+            witness = first_counterexample(candidate.table, law)
+            print(f"Rejected: {law}; witness={witness}", flush=True)
+
+    write_project(
+        candidate,
+        statistics,
+        unicode_pool,
+        structure_glyph,
+        operation_glyph,
+        symmetry_glyph,
+    )
+    audit()
+
+    if GENERATE_ONLY:
+        banner("GENERATION-ONLY MODE COMPLETE")
+        print(f"Lean source: {ROOT / 'HXCNovel.lean'}", flush=True)
+        print(
+            f"Report:      {ROOT / 'NOVEL_STRUCTURE_REPORT.md'}",
+            flush=True,
+        )
+        return
+
+    env = install_or_reuse_lean()
+    build(env)
+
+    banner("HXC NOVEL STRUCTURE: KERNEL VERIFIED")
+    print(f"Formal project: {ROOT}", flush=True)
+    print(f"Lean source:    {ROOT / 'HXCNovel.lean'}", flush=True)
+    print(
+        "Lean accepted the positive laws, automorphism, counterexamples, "
+        "and non-isomorphism certificates.",
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
